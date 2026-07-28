@@ -64,9 +64,9 @@ def run():
     Định dạng tin nhắn đẹp mắt để gửi qua Telegram (dùng icon, gạch đầu dòng ngắn gọn, giữ lại link).
     """
     
-    # Cú pháp gọi API mới của thư viện google-genai
+    # Đã sửa thành tên mô hình đầy đủ theo chuẩn mới
     response = client.models.generate_content(
-        model='gemini-1.5-pro',
+        model='gemini-1.5-pro-latest',
         contents=prompt
     )
     summary = response.text
