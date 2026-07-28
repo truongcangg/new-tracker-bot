@@ -64,9 +64,9 @@ def run():
     Định dạng tin nhắn đẹp mắt để gửi qua Telegram (dùng icon, gạch đầu dòng ngắn gọn, giữ lại link).
     """
     
-    # Đã sửa thành tên mô hình đầy đủ theo chuẩn mới
+   # Đổi sang mô hình Flash siêu tốc, không bị lỗi 404
     response = client.models.generate_content(
-        model='gemini-1.5-pro-latest',
+        model='gemini-1.5-flash',
         contents=prompt
     )
     summary = response.text
