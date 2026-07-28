@@ -3,7 +3,6 @@ import requests
 import feedparser
 from google import genai
 
-# Lấy biến môi trường khớp chính xác với tên Secret
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN_BOT")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI")
@@ -11,7 +10,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def send_telegram(text):
-    """Gửi tin nhắn về Telegram"""
+    """Gửi tin nhắn về Telegram và in ra phản hồi"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID, 
@@ -19,10 +18,11 @@ def send_telegram(text):
         "parse_mode": "Markdown",
         "disable_web_page_preview": True
     }
-    requests.post(url, json=payload)
+    # Yêu cầu in ra chính xác phản hồi từ máy chủ Telegram
+    response = requests.post(url, json=payload)
+    print("Phản hồi từ Telegram:", response.text)
 
 def get_github_trending():
-    """Lấy dự án GitHub tăng sao nhanh"""
     url = "https://api.github.com/search/repositories?q=created:>2026-07-01&sort=stars&order=desc&per_page=5"
     response = requests.get(url).json()
     items = response.get("items", [])
@@ -34,7 +34,6 @@ def get_github_trending():
     return result
 
 def get_news_feeds():
-    """Lấy tin tức từ RSS"""
     rss_urls = [
         "https://vnexpress.net/rss/tin-moi-nhat.rss",
         "https://tuoitre.vn/rss/tin-moi-nhat.rss"
@@ -63,7 +62,6 @@ def run():
     Định dạng tin nhắn đẹp mắt để gửi qua Telegram (dùng icon, gạch đầu dòng ngắn gọn, giữ lại link).
     """
     
-    # Đã cập nhật chính xác tên mô hình từ danh sách hợp lệ
     response = client.models.generate_content(
         model='gemini-3.5-flash',
         contents=prompt
