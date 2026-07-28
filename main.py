@@ -1,15 +1,15 @@
 import os
 import requests
 import feedparser
-import google.generativeai as genai
+from google import genai
 
-# Lấy biến môi trường khớp chính xác với tên Secret bạn đã tạo
+# Lấy biến môi trường khớp chính xác với tên Secret
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN_BOT")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI")
 
-# Cấu hình Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
+# Khởi tạo client Gemini theo chuẩn thư viện mới
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 def send_telegram(text):
     """Gửi tin nhắn về Telegram"""
@@ -55,7 +55,6 @@ def run():
     
     raw_content = f"Dữ liệu tin tức:\n{news_data}\n\nDữ liệu GitHub:\n{github_data}"
     
-    model = genai.GenerativeModel('gemini-1.5-pro')
     prompt = f"""
     Bạn là trợ lý tổng hợp tin tức chuyên nghiệp. Dưới đây là dữ liệu thu thập được:
     
@@ -65,7 +64,11 @@ def run():
     Định dạng tin nhắn đẹp mắt để gửi qua Telegram (dùng icon, gạch đầu dòng ngắn gọn, giữ lại link).
     """
     
-    response = model.generate_content(prompt)
+    # Cú pháp gọi API mới của thư viện google-genai
+    response = client.models.generate_content(
+        model='gemini-1.5-pro',
+        contents=prompt
+    )
     summary = response.text
     
     send_telegram(summary)
