@@ -19,28 +19,34 @@ if GEMINI_KEY:
     except Exception as e:
         st.error(f"Lỗi khởi tạo Gemini API: {e}")
 
-# Quản lý danh sách nguồn tin trong Session State
-if 'rss_sources' not in st.session_state:
-    st.session_state.rss_sources = [
-        "https://vnexpress.net/rss/tin-moi-nhat.rss",
-        "https://tuoitre.vn/rss/tin-moi-nhat.rss"
-    ]
+# Quản lý danh sách nguồn tin bằng DataFrame để cho phép Sửa/Xóa/Thêm trực tiếp
+if 'rss_sources_df' not in st.session_state:
+    st.session_state.rss_sources_df = pd.DataFrame({
+        "Đường link (URL)": [
+            "https://vnexpress.net/rss/tin-moi-nhat.rss",
+            "https://tuoitre.vn/rss/tin-moi-nhat.rss"
+        ]
+    })
 
 # ----------------- HÀM XỬ LÝ DỮ LIỆU -----------------
 
 def get_news_and_research():
-    """Lấy bài viết từ danh sách các nguồn RSS"""
+    """Lấy bài viết từ danh sách các nguồn"""
     articles = []
-    for url in st.session_state.rss_sources:
+    # Lấy danh sách link đang có trong bảng, bỏ qua các ô trống
+    urls = st.session_state.rss_sources_df['Đường link (URL)'].dropna().tolist()
+    
+    for url in urls:
+        if not url.strip(): continue
         try:
-            feed = feedparser.parse(url)
+            feed = feedparser.parse(url.strip())
             for entry in feed.entries[:3]:
                 articles.append({
                     'title': entry.title,
                     'link': entry.link,
                     'summary': getattr(entry, 'summary', '')
                 })
-        except Exception as e:
+        except Exception:
             st.warning(f"Không thể đọc nguồn: {url}")
     return articles
 
@@ -74,7 +80,7 @@ def get_github_trending():
 def analyze_with_ai(prompt):
     """Gọi Gemini phân tích"""
     if not client:
-        return "⚠️ Chưa cấu hình GEMINI API Key trong Streamlit Secrets."
+        return "⚠️ Chưa cấu hình GEMINI API Key."
     try:
         response = client.models.generate_content(
             model='gemini-3.5-flash',
@@ -84,93 +90,86 @@ def analyze_with_ai(prompt):
     except Exception as e:
         return f"Lỗi phân tích AI: {e}"
 
-# ----------------- GIAO DIỆN WEB (STREAMLIT) -----------------
+# ----------------- GIAO DIỆN WEB -----------------
 
-st.title("📈 Bảng Điều Khiển Giao Dịch & Chênh LệCH Thông Tin")
-st.caption("Hệ thống tự động quét dữ liệu tin tức, bài nghiên cứu và xu hướng công nghệ GitHub.")
+st.title("📈 Bảng Điều Khiển Giao Dịch & Chênh Lệch Thông Tin")
 
-# Sidebar - Điều khiển
-st.sidebar.header("⚙️ Quản lý nguồn tin")
-new_url = st.sidebar.text_input("Thêm đường link RSS/Báo mới:")
-if st.sidebar.button("➕ Thêm nguồn"):
-    if new_url and new_url not in st.session_state.rss_sources:
-        st.session_state.rss_sources.append(new_url)
-        st.sidebar.success("Đã thêm nguồn tin mới thành công!")
+# SIDEBAR: THANH ĐIỀU KHIỂN BÊN TRÁI
+st.sidebar.header("⚙️ Bảng Điều Khiển")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("📡 Các nguồn hiện có:")
-for idx, src in enumerate(st.session_state.rss_sources, 1):
-    st.sidebar.text(f"{idx}. {src[:30]}...")
-
-st.sidebar.markdown("---")
-btn_refresh = st.sidebar.button("🔄 Cập nhật dữ liệu ngay")
-
-# Layout chính 2 Cột
-col1, col2 = st.columns([1, 1])
-
-# CỘT 1: TIN TỨC & CHÊNH LỆCH THÔNG TIN
-with col1:
-    st.header("📰 Tin tức & Bài nghiên cứu")
+# Nút tam giác quản lý (Expander)
+with st.sidebar.expander("📂 Quản lý nguồn tin (Sửa/Xóa/Thêm)", expanded=False):
+    st.caption("Nhấp đúp vào link để SỬA, chọn dòng bấm phím Delete để XÓA, hoặc gõ vào ô trống dưới cùng để THÊM.")
     
+    # Bảng dữ liệu tương tác
+    edited_df = st.data_editor(
+        st.session_state.rss_sources_df,
+        num_rows="dynamic", # Cho phép thêm dòng mới
+        use_container_width=True,
+        hide_index=True
+    )
+    # Lưu lại trạng thái sau khi chỉnh sửa
+    st.session_state.rss_sources_df = edited_df
+
+st.sidebar.markdown("---")
+btn_refresh = st.sidebar.button("🔄 Cập nhật dữ liệu AI ngay")
+
+# MAIN AREA: TẠO NÚT BẤM CHUYỂN TRANG (TABS)
+tab_news, tab_github = st.tabs(["📰 Tin tức & Nghiên cứu", "🔥 Top 10 GitHub Trending"])
+
+# TAB 1: TIN TỨC
+with tab_news:
+    st.header("Phân tích Báo chí & Tác động Thị trường")
     news_items = get_news_and_research()
     if news_items:
-        # Chuẩn bị dữ liệu cho AI phân tích
         raw_text = "\n".join([f"- Tiêu đề: {item['title']}\nTóm tắt: {item['summary']}" for item in news_items[:5]])
-        
         prompt_news = f"""
         Bạn là chuyên gia phân tích tài chính và giao dịch chênh lệch thông tin (Information Arbitrage).
-        Dưới đây là các tin tức/nghiên cứu mới nhất:
+        Dữ liệu mới nhất:
         {raw_text}
         
-        Hãy đưa ra báo cáo ngắn gọn:
-        1. 🚨 **Giao dịch Chênh lệch thông tin:** Các tin tức nóng có thể tác động đến giá thị trường/cổ phiếu/ngành nào.
-        2. 🔬 **Bài nghiên cứu/Công nghệ đột phá:** Yếu tố mới có thể tạo ra cơ hội dài hạn.
-        3. 🎯 **Mức độ tác động:** (Cao / Trung bình / Thấp).
+        Viết báo cáo ngắn:
+        1. Giao dịch Chênh lệch thông tin: Tác động đến giá thị trường/cổ phiếu/ngành nào.
+        2. Mức độ tác động: (Cao/Trung bình/Thấp).
         """
         
         with st.spinner("Gemini đang phân tích tác động thị trường..."):
             ai_analysis = analyze_with_ai(prompt_news)
         
-        st.subheader("🤖 AI Phân tích Tác động Thị trường")
-        st.markdown(ai_analysis)
+        st.subheader("🤖 Đánh giá AI")
+        st.info(ai_analysis)
         
         st.markdown("---")
-        st.subheader("📋 Danh sách bài báo vừa cập nhật")
+        st.subheader("📋 Danh sách bài viết gốc")
         for item in news_items:
             with st.expander(item['title']):
                 st.write(item['summary'])
-                st.markdown(f"[🔗 Đọc bài gốc tại đây]({item['link']})")
+                st.markdown(f"[🔗 Đọc toàn bộ]({item['link']})")
 
-# CỘT 2: TOP 10 GITHUB TRENDING
-with col2:
-    st.header("🔥 Top 10 GitHub Trending (24h)")
-    
+# TAB 2: GITHUB TRENDING
+with tab_github:
+    st.header("Phân tích Công nghệ Đột phá")
     repos = get_github_trending()
     if repos:
-        # Vẽ biểu đồ
+        # Vẽ biểu đồ hiển thị rộng rãi hơn trên 1 tab
         df = pd.DataFrame(repos)
-        
-        fig, ax = plt.subplots(figsize=(8, 4.5))
+        fig, ax = plt.subplots(figsize=(10, 5))
         ax.barh(df['name'], df['stars'], color='#2ea44f')
         ax.set_xlabel('Số Sao Tăng Trong 24h', fontweight='bold')
-        ax.invert_yaxis()  # Đưa Top 1 lên trên
+        ax.invert_yaxis() 
         plt.tight_layout()
-        
         st.pyplot(fig)
         
-        # AI Phân tích tiềm năng thay đổi thị trường
         repo_text = "\n".join([f"- {r['name']} (+{r['stars']} stars)" for r in repos])
         prompt_github = f"""
-        Dưới đây là danh sách Top 10 dự án GitHub tăng trưởng nhanh nhất trong 24h qua:
+        Danh sách Top 10 dự án GitHub tăng trưởng nhanh nhất trong 24h:
         {repo_text}
         
-        Hãy đánh giá:
-        1. Dự án nào có **tiềm năng đột phá hoặc làm thay đổi thị trường/công nghệ**?
-        2. Tóm tắt ngắn gọn ứng dụng thực tế và lý do nó tăng sao đột biến.
+        Đánh giá: Dự án nào có tiềm năng đột phá làm thay đổi thị trường/công nghệ? Lý do tăng sao?
         """
         
-        with st.spinner("Gemini đang đánh giá tiềm năng các dự án GitHub..."):
+        with st.spinner("Gemini đang đánh giá tiềm năng thay đổi thị trường..."):
             ai_github_analysis = analyze_with_ai(prompt_github)
             
-        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường")
-        st.markdown(ai_github_analysis)
+        st.subheader("💡 Tiềm năng Thay đổi Thị trường")
+        st.success(ai_github_analysis)
