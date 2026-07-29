@@ -6,3 +6,4 @@ matplotlib
 plotly
 google-genai
 pandas
+groq
