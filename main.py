@@ -138,7 +138,7 @@ def get_github_trending():
     
     return sorted(repos, key=lambda x: x['stars'], reverse=True)
 
-# BỘ NHỚ ĐỆM CHO AI (SỬ DỤNG GROQ VÀ LLAMA 3)
+# BỘ NHỚ ĐỆM CHO AI (SỬ DỤNG GROQ VÀ LLAMA 3.1)
 @st.cache_data(ttl=3600, show_spinner=False)
 def analyze_with_ai(prompt):
     if not client:
@@ -151,7 +151,8 @@ def analyze_with_ai(prompt):
                     "content": prompt,
                 }
             ],
-            model="llama3-70b-8192", # Mô hình 70 Tỷ tham số siêu thông minh của Groq
+            # Cập nhật tên định danh mới nhất theo yêu cầu của Groq
+            model="llama-3.1-70b-versatile", 
         )
         return chat_completion.choices[0].message.content
     except Exception as e:
@@ -205,10 +206,10 @@ with tab_news:
         2. Mức độ tác động: (Cao/Trung bình/Thấp).
         """
         
-        with st.spinner("AI Llama-3 70B đang phân tích tác động thị trường..."):
+        with st.spinner("AI Llama 3.1 70B đang phân tích tác động thị trường..."):
             ai_analysis = analyze_with_ai(prompt_news)
         
-        st.subheader("🤖 Đánh giá từ chuyên gia AI (Llama-3 70B)")
+        st.subheader("🤖 Đánh giá từ chuyên gia AI (Llama 3.1 70B)")
         st.info(ai_analysis)
         
         st.markdown("---")
@@ -257,8 +258,8 @@ with tab_github:
         Đánh giá: Dự án nào có tiềm năng đột phá làm thay đổi thị trường/công nghệ? Lý do tăng sao?
         """
         
-        with st.spinner("AI Llama-3 70B đang đánh giá tiềm năng thay đổi thị trường..."):
+        with st.spinner("AI Llama 3.1 70B đang đánh giá tiềm năng thay đổi thị trường..."):
             ai_github_analysis = analyze_with_ai(prompt_github)
             
-        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường từ AI (Llama-3 70B)")
+        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường từ AI (Llama 3.1 70B)")
         st.success(ai_github_analysis)
