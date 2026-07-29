@@ -19,41 +19,43 @@ if GEMINI_KEY:
     except Exception as e:
         st.error(f"Lỗi khởi tạo Gemini API: {e}")
 
-# Quản lý danh sách nguồn tin
-if 'rss_sources_df' not in st.session_state:
-    st.session_state.rss_sources_df = pd.DataFrame({
-        "Đường link (URL)": [
-            "https://vnexpress.net/rss/tin-moi-nhat.rss",
-            "https://tuoitre.vn/rss/tin-moi-nhat.rss"
-        ]
-    })
+# Quản lý danh sách nguồn tin (Chuyển về dạng Danh sách để quản lý hàng loạt)
+if 'rss_sources' not in st.session_state:
+    st.session_state.rss_sources = [
+        "https://vnexpress.net/rss/tin-moi-nhat.rss",
+        "https://tuoitre.vn/rss/tin-moi-nhat.rss"
+    ]
 
-# --- HỘP THOẠI POPUP (MODAL) QUẢN LÝ NGUỒN TIN CÓ DẤU X ---
-@st.dialog("📂 Quản lý Nguồn tin (Sửa / Xóa / Thêm)")
+# --- HỘP THOẠI POPUP (MODAL) NHẬP LINK HÀNG LOẠT ---
+@st.dialog("📂 Quản lý Nguồn tin (Nhập hàng loạt)")
 def manage_sources_modal():
-    st.caption("Nhấp đúp vào ô để sửa link, chọn dòng bấm Delete để xóa, hoặc gõ vào dòng trống dưới cùng để thêm mới.")
+    st.caption("Dán toàn bộ danh sách link của bạn vào khung dưới đây. **Mỗi dòng là 1 đường link** (giống như soạn thảo trên Word/Notepad).")
     
-    edited_df = st.data_editor(
-        st.session_state.rss_sources_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True
-    )
-    st.session_state.rss_sources_df = edited_df
+    # Gộp danh sách hiện tại thành văn bản có xuống dòng
+    current_text = "\n".join(st.session_state.rss_sources)
+    
+    # Khung văn bản lớn (Text Area)
+    new_text = st.text_area("Danh sách đường link:", value=current_text, height=350)
     
     if st.button("💾 Lưu thay đổi", type="primary"):
-        st.success("Đã cập nhật danh sách nguồn tin thành công!")
+        # Tách văn bản thành từng dòng, xóa khoảng trắng và bỏ qua các dòng trống
+        lines = new_text.split('\n')
+        updated_sources = [line.strip() for line in lines if line.strip()]
+        
+        # Cập nhật vào hệ thống
+        st.session_state.rss_sources = updated_sources
+        
+        st.success(f"Đã cập nhật thành công {len(updated_sources)} nguồn tin!")
         st.rerun()
 
 # ----------------- HÀM XỬ LÝ DỮ LIỆU -----------------
 
 def get_news_and_research():
     articles = []
-    urls = st.session_state.rss_sources_df['Đường link (URL)'].dropna().tolist()
+    urls = st.session_state.rss_sources
     for url in urls:
-        if not url.strip(): continue
         try:
-            feed = feedparser.parse(url.strip())
+            feed = feedparser.parse(url)
             for entry in feed.entries[:3]:
                 articles.append({
                     'title': entry.title,
@@ -113,7 +115,7 @@ st.title("📈 Bảng Điều Khiển Giao Dịch & Chênh Lệch Thông Tin")
 st.sidebar.header("⚙️ Bảng Điều Khiển")
 
 # Nút bấm mở cửa sổ Popup quản lý nguồn tin
-if st.sidebar.button("📂 Quản lý Nguồn tin (Popup)", use_container_width=True):
+if st.sidebar.button("📂 Quản lý Nguồn tin (Nhập hàng loạt)", use_container_width=True):
     manage_sources_modal()
 
 st.sidebar.markdown("---")
@@ -125,6 +127,9 @@ tab_news, tab_github = st.tabs(["📰 Tin tức & Nghiên cứu", "🔥 Top 10 G
 # TAB 1: TIN TỨC
 with tab_news:
     st.header("Phân tích Báo chí & Tác động Thị trường")
+    
+    st.caption(f"Trạng thái: Đang theo dõi **{len(st.session_state.rss_sources)}** nguồn tin.")
+    
     news_items = get_news_and_research()
     if news_items:
         raw_text = "\n".join([f"- Tiêu đề: {item['title']}\nTóm tắt: {item['summary']}" for item in news_items[:5]])
