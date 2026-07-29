@@ -1,0 +1,7 @@
+streamlit
+requests
+feedparser
+beautifulsoup4
+matplotlib
+google-genai
+pandas
