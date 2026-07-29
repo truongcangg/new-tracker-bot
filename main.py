@@ -32,7 +32,6 @@ def load_links():
             links = [line.strip() for line in f.readlines() if line.strip()]
             if links:
                 return links
-    # Nếu file chưa tồn tại hoặc trống, trả về 2 link mặc định
     return [
         "https://vnexpress.net/rss/tin-moi-nhat.rss",
         "https://tuoitre.vn/rss/tin-moi-nhat.rss"
@@ -59,7 +58,6 @@ def manage_sources_modal():
         lines = new_text.split('\n')
         updated_sources = [line.strip() for line in lines if line.strip()]
         
-        # Cập nhật vào bộ nhớ tạm VÀ lưu vào file cứng
         st.session_state.rss_sources = updated_sources
         save_links(updated_sources)
         
@@ -138,7 +136,7 @@ def get_github_trending():
     
     return sorted(repos, key=lambda x: x['stars'], reverse=True)
 
-# BỘ NHỚ ĐỆM CHO AI (SỬ DỤNG GROQ VÀ LLAMA 3.1)
+# BỘ NHỚ ĐỆM CHO AI (SỬ DỤNG MÔ HÌNH CHUẨN XÁC TỪ TÀI LIỆU GROQ)
 @st.cache_data(ttl=3600, show_spinner=False)
 def analyze_with_ai(prompt):
     if not client:
@@ -151,8 +149,8 @@ def analyze_with_ai(prompt):
                     "content": prompt,
                 }
             ],
-            # Cập nhật tên định danh mới nhất theo yêu cầu của Groq
-            model="llama-3.1-70b-versatile", 
+            # Cập nhật chính xác mô hình đang được hỗ trợ từ Groq
+            model="openai/gpt-oss-120b", 
         )
         return chat_completion.choices[0].message.content
     except Exception as e:
@@ -206,10 +204,10 @@ with tab_news:
         2. Mức độ tác động: (Cao/Trung bình/Thấp).
         """
         
-        with st.spinner("AI Llama 3.1 70B đang phân tích tác động thị trường..."):
+        with st.spinner("AI GPT-OSS 120B đang phân tích tác động thị trường..."):
             ai_analysis = analyze_with_ai(prompt_news)
         
-        st.subheader("🤖 Đánh giá từ chuyên gia AI (Llama 3.1 70B)")
+        st.subheader("🤖 Đánh giá từ chuyên gia AI (GPT-OSS 120B)")
         st.info(ai_analysis)
         
         st.markdown("---")
@@ -258,8 +256,8 @@ with tab_github:
         Đánh giá: Dự án nào có tiềm năng đột phá làm thay đổi thị trường/công nghệ? Lý do tăng sao?
         """
         
-        with st.spinner("AI Llama 3.1 70B đang đánh giá tiềm năng thay đổi thị trường..."):
+        with st.spinner("AI GPT-OSS 120B đang đánh giá tiềm năng thay đổi thị trường..."):
             ai_github_analysis = analyze_with_ai(prompt_github)
             
-        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường từ AI (Llama 3.1 70B)")
+        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường từ AI (GPT-OSS 120B)")
         st.success(ai_github_analysis)
