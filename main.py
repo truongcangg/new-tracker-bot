@@ -122,7 +122,8 @@ def analyze_with_ai(prompt):
         return "⚠️ Chưa cấu hình GEMINI API Key."
     try:
         response = client.models.generate_content(
-            model='gemini-1.5-pro', # Đã nâng cấp lên phiên bản Pro
+            # Đã sửa lại đúng tên định danh đầy đủ của Google
+            model='gemini-1.5-pro-latest', 
             contents=prompt
         )
         return response.text
