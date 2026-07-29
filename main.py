@@ -5,7 +5,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import plotly.express as px
 import streamlit as st
-from google import genai
+from groq import Groq
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date
 import time
@@ -13,21 +13,40 @@ import time
 # Cấu hình trang Web
 st.set_page_config(page_title="Trading Terminal & Trend Tracker", page_icon="📈", layout="wide")
 
-# Khởi tạo Gemini Client
-GEMINI_KEY = st.secrets.get("GEMINI") or os.environ.get("GEMINI")
+# Khởi tạo Groq Client
+GROQ_KEY = st.secrets.get("GROQ") or os.environ.get("GROQ")
 client = None
-if GEMINI_KEY:
+if GROQ_KEY:
     try:
-        client = genai.Client(api_key=GEMINI_KEY)
+        client = Groq(api_key=GROQ_KEY)
     except Exception as e:
-        st.error(f"Lỗi khởi tạo Gemini API: {e}")
+        st.error(f"Lỗi khởi tạo Groq API: {e}")
 
-# Quản lý danh sách nguồn tin
-if 'rss_sources' not in st.session_state:
-    st.session_state.rss_sources = [
+# --- TÍNH NĂNG GHI NHỚ LINK VĨNH VIỄN BẰNG FILE CỨNG ---
+LINKS_FILE = "links.txt"
+
+def load_links():
+    """Đọc danh sách link từ file cứng"""
+    if os.path.exists(LINKS_FILE):
+        with open(LINKS_FILE, "r", encoding="utf-8") as f:
+            links = [line.strip() for line in f.readlines() if line.strip()]
+            if links:
+                return links
+    # Nếu file chưa tồn tại hoặc trống, trả về 2 link mặc định
+    return [
         "https://vnexpress.net/rss/tin-moi-nhat.rss",
         "https://tuoitre.vn/rss/tin-moi-nhat.rss"
     ]
+
+def save_links(links):
+    """Ghi đè danh sách link vào file cứng"""
+    with open(LINKS_FILE, "w", encoding="utf-8") as f:
+        for link in links:
+            f.write(f"{link}\n")
+
+# Tải danh sách nguồn tin khi mở trang
+if 'rss_sources' not in st.session_state:
+    st.session_state.rss_sources = load_links()
 
 # --- HỘP THOẠI POPUP (MODAL) ---
 @st.dialog("📂 Quản lý Nguồn tin (Nhập hàng loạt)")
@@ -39,10 +58,14 @@ def manage_sources_modal():
     if st.button("💾 Lưu thay đổi", type="primary"):
         lines = new_text.split('\n')
         updated_sources = [line.strip() for line in lines if line.strip()]
+        
+        # Cập nhật vào bộ nhớ tạm VÀ lưu vào file cứng
         st.session_state.rss_sources = updated_sources
+        save_links(updated_sources)
+        
         fetch_single_feed.clear() 
         analyze_with_ai.clear() 
-        st.success(f"Đã cập nhật thành công {len(updated_sources)} nguồn tin!")
+        st.success(f"Đã cập nhật và lưu cứng thành công {len(updated_sources)} nguồn tin!")
         st.rerun()
 
 # ----------------- HÀM XỬ LÝ DỮ LIỆU CÓ BỘ NHỚ ĐỆM & ĐA LUỒNG -----------------
@@ -115,18 +138,22 @@ def get_github_trending():
     
     return sorted(repos, key=lambda x: x['stars'], reverse=True)
 
-# BỘ NHỚ ĐỆM CHO AI
+# BỘ NHỚ ĐỆM CHO AI (SỬ DỤNG GROQ VÀ LLAMA 3)
 @st.cache_data(ttl=3600, show_spinner=False)
 def analyze_with_ai(prompt):
     if not client:
-        return "⚠️ Chưa cấu hình GEMINI API Key."
+        return "⚠️ Chưa cấu hình GROQ API Key."
     try:
-        response = client.models.generate_content(
-            # Đã sửa lại đúng tên định danh đầy đủ của Google
-            model='gemini-1.5-pro-latest', 
-            contents=prompt
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model="llama3-70b-8192", # Mô hình 70 Tỷ tham số siêu thông minh của Groq
         )
-        return response.text
+        return chat_completion.choices[0].message.content
     except Exception as e:
         return f"Lỗi phân tích AI: {e}"
 
@@ -178,10 +205,10 @@ with tab_news:
         2. Mức độ tác động: (Cao/Trung bình/Thấp).
         """
         
-        with st.spinner("Gemini Pro đang đọc báo và phân tích tác động thị trường..."):
+        with st.spinner("AI Llama-3 70B đang phân tích tác động thị trường..."):
             ai_analysis = analyze_with_ai(prompt_news)
         
-        st.subheader("🤖 Đánh giá từ chuyên gia AI (Gemini Pro)")
+        st.subheader("🤖 Đánh giá từ chuyên gia AI (Llama-3 70B)")
         st.info(ai_analysis)
         
         st.markdown("---")
@@ -230,8 +257,8 @@ with tab_github:
         Đánh giá: Dự án nào có tiềm năng đột phá làm thay đổi thị trường/công nghệ? Lý do tăng sao?
         """
         
-        with st.spinner("Gemini Pro đang đánh giá tiềm năng thay đổi thị trường..."):
+        with st.spinner("AI Llama-3 70B đang đánh giá tiềm năng thay đổi thị trường..."):
             ai_github_analysis = analyze_with_ai(prompt_github)
             
-        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường từ AI (Gemini Pro)")
+        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường từ AI (Llama-3 70B)")
         st.success(ai_github_analysis)
