@@ -230,22 +230,27 @@ with tab_github:
     if repos:
         df = pd.DataFrame(repos)
         
+        # HƯỚNG 1: Nhúng link thẳng vào tên dự án bằng thẻ HTML <a>
+        df['name_with_link'] = df.apply(lambda x: f"<a href='{x['link']}'>{x['name']}</a>", axis=1)
+        
         fig = px.bar(
             df, 
             x='stars', 
-            y='name', 
+            y='name_with_link', # Thay thế trục Y bằng cột tên đã gắn link
             orientation='h',
             title='Top 10 Dự án tăng sao nhiều nhất (24h qua)',
-            labels={'stars': 'Số sao tăng trong 24h', 'name': 'Dự án'},
+            labels={'stars': 'Số sao tăng trong 24h', 'name_with_link': 'Dự án'},
             color='stars',
             color_continuous_scale='Greens'
         )
-        fig.update_layout(yaxis={'categoryorder':'total ascending'})
+        # Cập nhật giao diện: Sắp xếp biểu đồ và ẩn tiêu đề trục Y cho gọn
+        fig.update_layout(
+            yaxis={'categoryorder':'total ascending'},
+            yaxis_title=None 
+        )
         st.plotly_chart(fig, use_container_width=True)
         
-        st.markdown("### 📊 Danh sách chi tiết dự án")
-        for r in repos:
-            st.markdown(f"- **[{r['name']}]({r['link']})** (+{r['stars']} sao)")
+        # Đã xóa bỏ hoàn toàn phần danh sách liệt kê chi tiết dự án ở đây
         
         st.markdown("---")
         repo_text = "\n".join([f"- {r['name']} (+{r['stars']} stars)" for r in repos])
