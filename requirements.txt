@@ -3,5 +3,6 @@ requests
 feedparser
 beautifulsoup4
 matplotlib
+plotly
 google-genai
 pandas
