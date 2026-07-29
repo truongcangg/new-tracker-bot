@@ -41,6 +41,7 @@ def manage_sources_modal():
         updated_sources = [line.strip() for line in lines if line.strip()]
         st.session_state.rss_sources = updated_sources
         fetch_single_feed.clear() 
+        analyze_with_ai.clear() 
         st.success(f"Đã cập nhật thành công {len(updated_sources)} nguồn tin!")
         st.rerun()
 
@@ -114,12 +115,14 @@ def get_github_trending():
     
     return sorted(repos, key=lambda x: x['stars'], reverse=True)
 
+# BỘ NHỚ ĐỆM CHO AI
+@st.cache_data(ttl=3600, show_spinner=False)
 def analyze_with_ai(prompt):
     if not client:
         return "⚠️ Chưa cấu hình GEMINI API Key."
     try:
         response = client.models.generate_content(
-            model='gemini-3.5-flash',
+            model='gemini-1.5-pro', # Đã nâng cấp lên phiên bản Pro
             contents=prompt
         )
         return response.text
@@ -141,9 +144,10 @@ st.sidebar.markdown("---")
 selected_date = st.sidebar.date_input("📅 Lọc tin từ ngày:", date.today())
 
 st.sidebar.markdown("---")
-if st.sidebar.button("🔄 Cập nhật dữ liệu AI ngay", use_container_width=True):
+if st.sidebar.button("🔄 Làm mới toàn bộ dữ liệu ngay", use_container_width=True):
     fetch_single_feed.clear()
     get_github_trending.clear()
+    analyze_with_ai.clear()
     st.rerun()
 
 # TẠO NÚT CHUYỂN TRANG (TABS)
@@ -173,10 +177,10 @@ with tab_news:
         2. Mức độ tác động: (Cao/Trung bình/Thấp).
         """
         
-        with st.spinner("Gemini đang đọc báo và phân tích tác động thị trường..."):
+        with st.spinner("Gemini Pro đang đọc báo và phân tích tác động thị trường..."):
             ai_analysis = analyze_with_ai(prompt_news)
         
-        st.subheader("🤖 Đánh giá AI")
+        st.subheader("🤖 Đánh giá từ chuyên gia AI (Gemini Pro)")
         st.info(ai_analysis)
         
         st.markdown("---")
@@ -212,14 +216,9 @@ with tab_github:
         fig.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig, use_container_width=True)
         
-        st.markdown("### 📊 Chi tiết dự án & Tra cứu Lịch sử Sao")
+        st.markdown("### 📊 Danh sách chi tiết dự án")
         for r in repos:
-            star_history_link = f"https://star-history.com/#{r['name']}&Date"
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                st.markdown(f"- **[{r['name']}]({r['link']})** (+{r['stars']} sao)")
-            with c2:
-                st.markdown(f"[📈 Xem Star History]({star_history_link})")
+            st.markdown(f"- **[{r['name']}]({r['link']})** (+{r['stars']} sao)")
         
         st.markdown("---")
         repo_text = "\n".join([f"- {r['name']} (+{r['stars']} stars)" for r in repos])
@@ -230,8 +229,8 @@ with tab_github:
         Đánh giá: Dự án nào có tiềm năng đột phá làm thay đổi thị trường/công nghệ? Lý do tăng sao?
         """
         
-        with st.spinner("Gemini đang đánh giá tiềm năng thay đổi thị trường..."):
+        with st.spinner("Gemini Pro đang đánh giá tiềm năng thay đổi thị trường..."):
             ai_github_analysis = analyze_with_ai(prompt_github)
             
-        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường từ AI")
+        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường từ AI (Gemini Pro)")
         st.success(ai_github_analysis)
