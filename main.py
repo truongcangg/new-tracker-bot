@@ -6,7 +6,6 @@ from supabase import create_client, Client
 import datetime
 import pandas as pd
 import plotly.express as px
-from groq import Groq
 
 # --- CẤU HÌNH TRANG ---
 st.set_page_config(page_title="Trading Terminal & Trend Tracker", layout="wide")
@@ -74,21 +73,9 @@ def fetch_and_save_github():
             except Exception:
                 pass
 
-# --- HỆ THỐNG CÀO DỮ LIỆU TỰ ĐỘNG (CACHE 15 PHÚT) ---
-@st.cache_data(ttl=900, show_spinner=False)
-def auto_scrape_data():
-    try:
-        with open("links.txt", "r") as f:
-            links = f.readlines()
-        fetch_and_save_news(links)
-    except Exception:
-        pass
-    
-    fetch_and_save_github()
-    return datetime.datetime.now()
-
-# Chạy ngầm hàm cào dữ liệu ngay khi tải trang
-last_run_time = auto_scrape_data()
+# ==========================================
+# 1. HIỂN THỊ GIAO DIỆN NGAY LẬP TỨC (UI FIRST)
+# ==========================================
 
 # --- GIAO DIỆN SIDEBAR ---
 with st.sidebar:
@@ -105,38 +92,39 @@ with st.sidebar:
         start_date = (now - datetime.timedelta(days=30)).date().isoformat()
 
     st.divider()
-    st.info(f"🔄 Hệ thống đang tự động cào dữ liệu ngầm.\n\n⏱️ Lần làm mới gần nhất: **{last_run_time.strftime('%H:%M:%S')}**\n\n*(Sẽ tự động cập nhật lại sau 15 phút)*")
+    # Khung giữ chỗ để hiện trạng thái cào dữ liệu sau cùng
+    status_placeholder = st.empty() 
 
 # --- GIAO DIỆN CHÍNH (TABS) ---
 tab1, tab2 = st.tabs(["📰 Tin tức & Báo chí", "🔥 Top 10 GitHub Trending"])
 
-# TAB 1: TIN TỨC
+# TAB 1: TIN TỨC (Load từ Database)
 with tab1:
     st.subheader(f"Phân tích Báo chí ({time_filter})")
     
     news_response = supabase.table("news").select("*").gte("created_at", start_date).order("created_at", desc=True).execute()
     news_data = news_response.data
     
-    st.info(f"Đã tìm thấy **{len(news_data)}** bài viết trong hệ thống lưu trữ thuộc khoảng thời gian: {time_filter}.")
+    st.info(f"Đã tìm thấy **{len(news_data)}** bài viết trong hệ thống.")
     
     if len(news_data) > 0:
         for item in news_data:
             with st.expander(f"📌 {item['title']}"):
                 st.write(f"**Ngày đăng gốc:** {item['published_date']}")
                 st.write(f"**Nguồn RSS:** {item['source']}")
-                st.markdown(f"🔗 [Bấm vào đây để đọc bài báo trên trình duyệt]({item['link']})")
+                st.markdown(f"🔗 [Đọc bài báo trên trình duyệt]({item['link']})")
                 
-                if st.button("🔍 Kiểm tra bài báo còn tồn tại không?", key=f"check_{item['id']}"):
+                if st.button("🔍 Kiểm tra bài báo", key=f"check_{item['id']}"):
                     try:
                         r = requests.head(item['link'], timeout=5, allow_redirects=True)
                         if r.status_code < 400:
-                            st.success("🟢 BÀI BÁO ĐANG HOẠT ĐỘNG (Web vẫn còn bài này)")
+                            st.success("🟢 BÀI BÁO ĐANG HOẠT ĐỘNG")
                         else:
-                            st.error(f"🔴 LỖI {r.status_code}: Bài báo có thể đã bị xóa, ẩn, hoặc web chặn truy cập!")
+                            st.error(f"🔴 LỖI {r.status_code}: Bài báo có thể đã bị xóa!")
                     except Exception:
-                        st.error("🔴 LỖI MẠNG: Không thể kết nối tới trang báo này!")
+                        st.error("🔴 LỖI MẠNG!")
 
-# TAB 2: GITHUB TRENDING
+# TAB 2: GITHUB TRENDING (Load từ Database)
 with tab2:
     st.subheader(f"Dự án Công nghệ Nổi bật ({time_filter})")
     
@@ -159,16 +147,38 @@ with tab2:
         for item in git_data:
             with st.expander(f"📦 {item['repo_name']}"):
                 st.write(f"**Mô tả:** {item['description']}")
-                st.markdown(f"🔗 [Truy cập Mã nguồn (GitHub)]({item['repo_link']})")
+                st.markdown(f"🔗 [Truy cập GitHub]({item['repo_link']})")
                 
-                if st.button("🔍 Kiểm tra Repo còn tồn tại không?", key=f"git_{item['id']}"):
+                if st.button("🔍 Kiểm tra Repo", key=f"git_{item['id']}"):
                     try:
                         r = requests.head(item['repo_link'], timeout=5, allow_redirects=True)
                         if r.status_code < 400:
-                            st.success("🟢 Dự án vẫn hoạt động bình thường!")
+                            st.success("🟢 Dự án hoạt động bình thường!")
                         else:
-                            st.error(f"🔴 Lỗi {r.status_code}: Repository này đã bị xóa hoặc chuyển sang Private!")
+                            st.error(f"🔴 Lỗi {r.status_code}: Repo đã bị xóa/Private!")
                     except Exception:
-                        st.error("🔴 Không thể kết nối tới GitHub!")
+                        st.error("🔴 Lỗi kết nối!")
     else:
-        st.warning(f"Chưa có dữ liệu GitHub cho '{time_filter}'. Hệ thống đang tự động cào ngầm, vui lòng đợi và tải lại trang!")
+        st.warning(f"Chưa có dữ liệu GitHub cho '{time_filter}'. Hệ thống đang tự động cào ngầm, vui lòng đợi!")
+
+
+# ==========================================
+# 2. HỆ THỐNG CÀO DỮ LIỆU CHẠY NGẦM (BACKGROUND)
+# ==========================================
+@st.cache_data(ttl=900, show_spinner=False)
+def auto_scrape_data():
+    try:
+        with open("links.txt", "r") as f:
+            links = f.readlines()
+        fetch_and_save_news(links)
+    except Exception:
+        pass
+    
+    fetch_and_save_github()
+    return datetime.datetime.now()
+
+# Chạy ngầm và cập nhật trạng thái ở Sidebar sau khi giao diện đã hiển thị xong
+with status_placeholder:
+    with st.spinner("Đang cập nhật nguồn dữ liệu ngầm..."):
+        last_run_time = auto_scrape_data()
+    st.success(f"✅ Đã đồng bộ lúc {last_run_time.strftime('%H:%M:%S')}")
