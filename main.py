@@ -9,7 +9,7 @@ import pandas as pd
 from groq import Groq
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from xml.etree import ElementTree as ET
-from datetime import datetime
+
 # ==========================================
 # CẤU HÌNH TRANG & GIAO DIỆN
 # ==========================================
@@ -116,7 +116,7 @@ def add_rss_source(url: str):
             "name": name if name else url,
             "url": url,
             "is_active": True,
-            "last_checked": datetime.now().isoformat(),
+            "last_checked": datetime.datetime.now().isoformat(),
             "last_article_count": article_count
         }).execute()
         return True, "Đã thêm nguồn mới!"
