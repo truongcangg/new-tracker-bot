@@ -3,12 +3,13 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
+import datetime
 import json
 import pandas as pd
 from groq import Groq
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from xml.etree import ElementTree as ET
-
+from datetime import datetime
 # ==========================================
 # CẤU HÌNH TRANG & GIAO DIỆN
 # ==========================================
@@ -110,12 +111,13 @@ def add_rss_source(url: str):
     if not url:
         return False, "Link trống."
     try:
+        supabase.table("rss_sources").insert({"url": url, "is_active": True}).execute()
         name, article_count = get_rss_info(url)
         supabase.table("rss_sources").insert({
             "name": name if name else url,
             "url": url,
             "is_active": True,
-            "last_checked": datetime.datetime.now().isoformat(),
+            "last_checked": datetime.now().isoformat(),
             "last_article_count": article_count
         }).execute()
         return True, "Đã thêm nguồn mới!"
@@ -221,7 +223,7 @@ def _parse_one_feed(link: str):
             articles.append({
                 "title": entry.title if "title" in entry else "No Title",
                 "link": entry.link if "link" in entry else "",
-                "published_date": entry.published if "published" in entry else datetime.now().isoformat(),
+                "published_date": entry.published if "published" in entry else datetime.datetime.now().isoformat(),
                 "source": link,
                 "is_active": True,
                 "_rss_fallback_text": entry.get("summary", entry.get("description", "")),
@@ -494,7 +496,7 @@ def render_time_filter(prefix: str):
         key=f"{prefix}_filter_mode",
         horizontal=True,
     )
-    now = datetime.now()
+    now = datetime.datetime.now()
 
     if filter_mode == "📅 Theo ngày cụ thể (Lịch)":
         selected_date = st.date_input("Chọn một ngày:", now.date(), key=f"{prefix}_date")
@@ -623,20 +625,25 @@ https://techcrunch.com/feed"""
                         display = display[:42] + "..."
                     st.text(display)
 
-                    with c2:
-                        if st.button("🔍", key=f"check_{src['id']}"):
-                            ok = check_rss_status(src["url"])
-                            if ok:
-                                st.success("RSS hoạt động")
-                            else:
-                                st.error("RSS lỗi hoặc không còn tồn tại")
+with c2:
 
-                    with c3:
-                        if st.button("🗑️", key=f"del_{src['id']}"):
-                            delete_rss_source(src["id"])
-                            st.rerun()
+    if st.button("🔍", key=f"check_{src['id']}"):
 
-        st.divider()
+        ok = check_rss_status(src["url"])
+
+        if ok:
+            st.success("RSS hoạt động")
+        else:
+            st.error("RSS lỗi hoặc không còn tồn tại")
+
+with c3:
+
+    if st.button("🗑️", key=f"del_{src['id']}"):
+
+        delete_rss_source(src["id"])
+        st.rerun()
+
+    st.divider()
 
     status_placeholder = st.empty()
 
@@ -737,7 +744,7 @@ def auto_scrape_data():
     except Exception:
         pass
     fetch_and_save_github()
-    return datetime.now()
+    return datetime.datetime.now()
 
 
 with status_placeholder:
