@@ -3,7 +3,6 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
-import datetime
 import json
 import pandas as pd
 from groq import Groq
@@ -624,25 +623,20 @@ https://techcrunch.com/feed"""
                         display = display[:42] + "..."
                     st.text(display)
 
-with c2:
+                    with c2:
+                        if st.button("🔍", key=f"check_{src['id']}"):
+                            ok = check_rss_status(src["url"])
+                            if ok:
+                                st.success("RSS hoạt động")
+                            else:
+                                st.error("RSS lỗi hoặc không còn tồn tại")
 
-    if st.button("🔍", key=f"check_{src['id']}"):
+                    with c3:
+                        if st.button("🗑️", key=f"del_{src['id']}"):
+                            delete_rss_source(src["id"])
+                            st.rerun()
 
-        ok = check_rss_status(src["url"])
-
-        if ok:
-            st.success("RSS hoạt động")
-        else:
-            st.error("RSS lỗi hoặc không còn tồn tại")
-
-with c3:
-
-    if st.button("🗑️", key=f"del_{src['id']}"):
-
-        delete_rss_source(src["id"])
-        st.rerun()
-
-    st.divider()
+        st.divider()
 
     status_placeholder = st.empty()
 
