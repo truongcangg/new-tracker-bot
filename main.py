@@ -81,31 +81,42 @@ def fetch_and_save_github():
 with st.sidebar:
     st.header("⚙️ Bảng Điều Khiển")
     
-    time_filter = st.selectbox("📅 Chọn mốc thời gian:", ["Hôm nay", "Tuần này", "Tháng này"])
+    # KẾT HỢP CẢ LỊCH VÀ CHU KỲ VÀO 1 BỘ LỌC
+    filter_mode = st.radio("🔍 Chế độ lọc dữ liệu:", ["📅 Theo ngày cụ thể (Lịch)", "📊 Tổng hợp (Tuần/Tháng)"])
     
     now = datetime.datetime.now()
-    if time_filter == "Hôm nay":
-        start_date = now.date().isoformat()
-    elif time_filter == "Tuần này":
-        start_date = (now - datetime.timedelta(days=7)).date().isoformat()
+    
+    if filter_mode == "📅 Theo ngày cụ thể (Lịch)":
+        selected_date = st.date_input("Chọn một ngày:", now.date())
+        # Tạo mốc thời gian từ 00:00:00 đến 23:59:59 của ngày được chọn để lọc Database chính xác
+        start_time = datetime.datetime.combine(selected_date, datetime.time.min).isoformat()
+        end_time = datetime.datetime.combine(selected_date, datetime.time.max).isoformat()
+        display_title = f"Ngày {selected_date.strftime('%d/%m/%Y')}"
+        
     else:
-        start_date = (now - datetime.timedelta(days=30)).date().isoformat()
+        time_period = st.selectbox("Chọn chu kỳ:", ["Tuần này", "Tháng này"])
+        if time_period == "Tuần này":
+            start_time = (now - datetime.timedelta(days=7)).isoformat()
+        else:
+            start_time = (now - datetime.timedelta(days=30)).isoformat()
+        end_time = now.isoformat()
+        display_title = time_period
 
     st.divider()
-    # Khung giữ chỗ để hiện trạng thái cào dữ liệu sau cùng
     status_placeholder = st.empty() 
 
 # --- GIAO DIỆN CHÍNH (TABS) ---
 tab1, tab2 = st.tabs(["📰 Tin tức & Báo chí", "🔥 Top 10 GitHub Trending"])
 
-# TAB 1: TIN TỨC (Load từ Database)
+# TAB 1: TIN TỨC
 with tab1:
-    st.subheader(f"Phân tích Báo chí ({time_filter})")
+    st.subheader(f"Phân tích Báo chí ({display_title})")
     
-    news_response = supabase.table("news").select("*").gte("created_at", start_date).order("created_at", desc=True).execute()
+    # Lọc lấy bài báo nằm chính xác trong mốc thời gian (lte = nhỏ hơn hoặc bằng, gte = lớn hơn hoặc bằng)
+    news_response = supabase.table("news").select("*").gte("created_at", start_time).lte("created_at", end_time).order("created_at", desc=True).execute()
     news_data = news_response.data
     
-    st.info(f"Đã tìm thấy **{len(news_data)}** bài viết trong hệ thống.")
+    st.info(f"Đã tìm thấy **{len(news_data)}** bài viết.")
     
     if len(news_data) > 0:
         for item in news_data:
@@ -124,27 +135,32 @@ with tab1:
                     except Exception:
                         st.error("🔴 LỖI MẠNG!")
 
-# TAB 2: GITHUB TRENDING (Load từ Database)
+# TAB 2: GITHUB TRENDING
 with tab2:
-    st.subheader(f"Dự án Công nghệ Nổi bật ({time_filter})")
+    st.subheader(f"Dự án Công nghệ Nổi bật ({display_title})")
     
-    period_map = {"Hôm nay": "daily", "Tuần này": "weekly", "Tháng này": "monthly"}
-    selected_period = period_map[time_filter]
-    
-    git_response = supabase.table("github_trending").select("*").eq("period", selected_period).order("fetched_date", desc=True).limit(10).execute()
+    if filter_mode == "📅 Theo ngày cụ thể (Lịch)":
+        git_response = supabase.table("github_trending").select("*").eq("fetched_date", selected_date.isoformat()).eq("period", "daily").order("created_at", desc=True).limit(10).execute()
+    else:
+        period_val = "weekly" if time_period == "Tuần này" else "monthly"
+        past_date = (now.date() - datetime.timedelta(days=7 if period_val == "weekly" else 30)).isoformat()
+        git_response = supabase.table("github_trending").select("*").eq("period", period_val).gte("fetched_date", past_date).order("fetched_date", desc=True).execute()
+        
     git_data = git_response.data
     
     if len(git_data) > 0:
         df = pd.DataFrame(git_data)
+        # Loại bỏ các dự án trùng lặp nếu lọc theo chu kỳ dài ngày
+        df = df.drop_duplicates(subset=['repo_link']).head(10)
         df['Trend Score'] = range(len(df), 0, -1) 
         
         fig = px.bar(df, x='Trend Score', y='repo_name', orientation='h', 
-                     title=f"Biểu đồ Xu hướng ({time_filter})", text='repo_name')
+                     title=f"Biểu đồ Xu hướng ({display_title})", text='repo_name')
         fig.update_yaxes(autorange="reversed")
         st.plotly_chart(fig, use_container_width=True)
         
         st.write("### Chi tiết các dự án:")
-        for item in git_data:
+        for item in df.to_dict('records'):
             with st.expander(f"📦 {item['repo_name']}"):
                 st.write(f"**Mô tả:** {item['description']}")
                 st.markdown(f"🔗 [Truy cập GitHub]({item['repo_link']})")
@@ -159,7 +175,7 @@ with tab2:
                     except Exception:
                         st.error("🔴 Lỗi kết nối!")
     else:
-        st.warning(f"Chưa có dữ liệu GitHub cho '{time_filter}'. Hệ thống đang tự động cào ngầm, vui lòng đợi!")
+        st.warning(f"Chưa có dữ liệu cho mốc thời gian này. *(Lưu ý: Dữ liệu của những ngày trước khi tạo hệ thống sẽ không tồn tại).*")
 
 
 # ==========================================
@@ -177,7 +193,6 @@ def auto_scrape_data():
     fetch_and_save_github()
     return datetime.datetime.now()
 
-# Chạy ngầm và cập nhật trạng thái ở Sidebar sau khi giao diện đã hiển thị xong
 with status_placeholder:
     with st.spinner("Đang cập nhật nguồn dữ liệu ngầm..."):
         last_run_time = auto_scrape_data()
