@@ -1,268 +1,174 @@
-import os
-import requests
-import feedparser
-import pandas as pd
-from bs4 import BeautifulSoup
-import plotly.express as px
 import streamlit as st
+import feedparser
+import requests
+from bs4 import BeautifulSoup
+from supabase import create_client, Client
+import datetime
+import pandas as pd
+import plotly.express as px
 from groq import Groq
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, date
-import time
 
-# Cấu hình trang Web
-st.set_page_config(page_title="Trading Terminal & Trend Tracker", page_icon="📈", layout="wide")
-
-# Khởi tạo Groq Client
-GROQ_KEY = st.secrets.get("GROQ") or os.environ.get("GROQ")
-client = None
-if GROQ_KEY:
-    try:
-        client = Groq(api_key=GROQ_KEY)
-    except Exception as e:
-        st.error(f"Lỗi khởi tạo Groq API: {e}")
-
-# --- TÍNH NĂNG GHI NHỚ LINK VĨNH VIỄN BẰNG FILE CỨNG ---
-LINKS_FILE = "links.txt"
-
-def load_links():
-    """Đọc danh sách link từ file cứng"""
-    if os.path.exists(LINKS_FILE):
-        with open(LINKS_FILE, "r", encoding="utf-8") as f:
-            links = [line.strip() for line in f.readlines() if line.strip()]
-            if links:
-                return links
-    return [
-        "https://vnexpress.net/rss/tin-moi-nhat.rss",
-        "https://tuoitre.vn/rss/tin-moi-nhat.rss"
-    ]
-
-def save_links(links):
-    """Ghi đè danh sách link vào file cứng"""
-    with open(LINKS_FILE, "w", encoding="utf-8") as f:
-        for link in links:
-            f.write(f"{link}\n")
-
-# Tải danh sách nguồn tin khi mở trang
-if 'rss_sources' not in st.session_state:
-    st.session_state.rss_sources = load_links()
-
-# --- HỘP THOẠI POPUP (MODAL) ---
-@st.dialog("📂 Quản lý Nguồn tin (Nhập hàng loạt)")
-def manage_sources_modal():
-    st.caption("Dán toàn bộ danh sách link của bạn vào khung dưới đây. **Mỗi dòng là 1 đường link**.")
-    current_text = "\n".join(st.session_state.rss_sources)
-    new_text = st.text_area("Danh sách đường link:", value=current_text, height=350)
-    
-    if st.button("💾 Lưu thay đổi", type="primary"):
-        lines = new_text.split('\n')
-        updated_sources = [line.strip() for line in lines if line.strip()]
-        
-        st.session_state.rss_sources = updated_sources
-        save_links(updated_sources)
-        
-        fetch_single_feed.clear() 
-        analyze_with_ai.clear() 
-        st.success(f"Đã cập nhật và lưu cứng thành công {len(updated_sources)} nguồn tin!")
-        st.rerun()
-
-# ----------------- HÀM XỬ LÝ DỮ LIỆU CÓ BỘ NHỚ ĐỆM & ĐA LUỒNG -----------------
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def fetch_single_feed(url):
-    """Cào 1 trang độc lập và trích xuất dữ liệu cơ bản"""
-    try:
-        feed = feedparser.parse(url)
-        entries = []
-        for entry in feed.entries[:15]: 
-            parsed_time = getattr(entry, 'published_parsed', getattr(entry, 'updated_parsed', None))
-            if parsed_time:
-                entry_date = datetime.fromtimestamp(time.mktime(parsed_time))
-            else:
-                entry_date = datetime.now()
-            
-            entries.append({
-                'title': entry.title,
-                'link': entry.link,
-                'summary': getattr(entry, 'summary', ''),
-                'date': entry_date 
-            })
-        return entries
-    except:
-        return []
-
-def get_news_and_research(urls, target_date):
-    """Cào nhiều trang cùng lúc (Đa luồng) và lọc theo ngày"""
-    articles = []
-    target_date_start = datetime.combine(target_date, datetime.min.time())
-    
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_url = {executor.submit(fetch_single_feed, url): url for url in urls}
-        for future in as_completed(future_to_url):
-            entries = future.result()
-            if entries:
-                for item in entries:
-                    if item['date'] >= target_date_start:
-                        articles.append(item)
-    
-    articles = sorted(articles, key=lambda x: x['date'], reverse=True)
-    return articles
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def get_github_trending():
-    url = "https://github.com/trending"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    repos = []
-    try:
-        res = requests.get(url, headers=headers)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            rows = soup.select('article.Box-row')
-            for row in rows[:10]:
-                title_elem = row.select_one('h2 a')
-                if not title_elem: continue
-                name = "".join(title_elem.text.split())
-                
-                stars_today = 0
-                for span in row.find_all('span'):
-                    text = span.get_text()
-                    if 'stars today' in text or 'star today' in text:
-                        num_str = "".join(filter(str.isdigit, text))
-                        if num_str: stars_today = int(num_str)
-                        break
-                repos.append({'name': name, 'stars': stars_today, 'link': f"https://github.com/{name}"})
-    except Exception as e:
-        pass
-    
-    return sorted(repos, key=lambda x: x['stars'], reverse=True)
-
-# BỘ NHỚ ĐỆM CHO AI (SỬ DỤNG MÔ HÌNH CHUẨN XÁC TỪ TÀI LIỆU GROQ)
-@st.cache_data(ttl=3600, show_spinner=False)
-def analyze_with_ai(prompt):
-    if not client:
-        return "⚠️ Chưa cấu hình GROQ API Key."
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            # Cập nhật chính xác mô hình đang được hỗ trợ từ Groq
-            model="openai/gpt-oss-120b", 
-        )
-        return chat_completion.choices[0].message.content
-    except Exception as e:
-        return f"Lỗi phân tích AI: {e}"
-
-# ----------------- GIAO DIỆN WEB CHÍNH -----------------
-
+# --- CẤU HÌNH TRANG ---
+st.set_page_config(page_title="Trading Terminal & Trend Tracker", layout="wide")
 st.title("📈 Bảng Điều Khiển Giao Dịch & Chênh Lệch Thông Tin")
 
-# SIDEBAR: THANH ĐIỀU KHIỂN
-st.sidebar.header("⚙️ Bảng Điều Khiển")
+# --- KẾT NỐI SUPABASE ---
+@st.cache_resource
+def init_db() -> Client:
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
-if st.sidebar.button("📂 Quản lý Nguồn tin", use_container_width=True):
-    manage_sources_modal()
+supabase = init_db()
 
-st.sidebar.markdown("---")
+# --- HÀM CÀO DỮ LIỆU BÁO CHÍ (RSS) ---
+def fetch_and_save_news(links):
+    new_articles = 0
+    for link in links:
+        if not link.strip(): continue
+        feed = feedparser.parse(link.strip())
+        for entry in feed.entries[:10]:
+            title = entry.title if 'title' in entry else 'No Title'
+            link_url = entry.link if 'link' in entry else ''
+            published = entry.published if 'published' in entry else datetime.datetime.now().isoformat()
+            
+            try:
+                supabase.table("news").upsert({
+                    "title": title,
+                    "link": link_url,
+                    "published_date": published,
+                    "source": link.strip(),
+                    "is_active": True
+                }, on_conflict="link").execute()
+                new_articles += 1
+            except Exception:
+                pass
+    return new_articles
 
-selected_date = st.sidebar.date_input("📅 Lọc tin từ ngày:", date.today())
+# --- HÀM CÀO DỮ LIỆU GITHUB TRENDING ---
+def fetch_and_save_github():
+    periods = ["daily", "weekly", "monthly"]
+    for period in periods:
+        url = f"https://github.com/trending?since={period}"
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        repos = soup.find_all('article', class_='Box-row')
+        
+        today_str = datetime.date.today().isoformat()
+        
+        for repo in repos[:10]:
+            h2 = repo.find('h2', class_='h3 lh-condensed')
+            a_tag = h2.find('a') if h2 else None
+            repo_name = a_tag.text.strip().replace('\n', '').replace(' ', '') if a_tag else "Unknown"
+            repo_link = "https://github.com" + a_tag['href'] if a_tag else ""
+            
+            p_tag = repo.find('p', class_='col-9 color-fg-muted my-1 pr-4')
+            description = p_tag.text.strip() if p_tag else "Không có mô tả"
+            
+            try:
+                supabase.table("github_trending").upsert({
+                    "repo_name": repo_name,
+                    "repo_link": repo_link,
+                    "description": description,
+                    "period": period,
+                    "fetched_date": today_str
+                }, on_conflict="repo_link, period, fetched_date").execute()
+            except Exception:
+                pass
 
-st.sidebar.markdown("---")
-if st.sidebar.button("🔄 Làm mới toàn bộ dữ liệu ngay", use_container_width=True):
-    fetch_single_feed.clear()
-    get_github_trending.clear()
-    analyze_with_ai.clear()
-    st.rerun()
+# --- HỆ THỐNG CÀO DỮ LIỆU TỰ ĐỘNG (CACHE 15 PHÚT) ---
+@st.cache_data(ttl=900, show_spinner=False)
+def auto_scrape_data():
+    try:
+        with open("links.txt", "r") as f:
+            links = f.readlines()
+        fetch_and_save_news(links)
+    except Exception:
+        pass
+    
+    fetch_and_save_github()
+    return datetime.datetime.now()
 
-# TẠO NÚT CHUYỂN TRANG (TABS)
-tab_news, tab_github = st.tabs(["📰 Tin tức & Nghiên cứu", "🔥 Top 10 GitHub Trending"])
+# Chạy ngầm hàm cào dữ liệu ngay khi tải trang
+last_run_time = auto_scrape_data()
+
+# --- GIAO DIỆN SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ Bảng Điều Khiển")
+    
+    time_filter = st.selectbox("📅 Chọn mốc thời gian:", ["Hôm nay", "Tuần này", "Tháng này"])
+    
+    now = datetime.datetime.now()
+    if time_filter == "Hôm nay":
+        start_date = now.date().isoformat()
+    elif time_filter == "Tuần này":
+        start_date = (now - datetime.timedelta(days=7)).date().isoformat()
+    else:
+        start_date = (now - datetime.timedelta(days=30)).date().isoformat()
+
+    st.divider()
+    st.info(f"🔄 Hệ thống đang tự động cào dữ liệu ngầm.\n\n⏱️ Lần làm mới gần nhất: **{last_run_time.strftime('%H:%M:%S')}**\n\n*(Sẽ tự động cập nhật lại sau 15 phút)*")
+
+# --- GIAO DIỆN CHÍNH (TABS) ---
+tab1, tab2 = st.tabs(["📰 Tin tức & Báo chí", "🔥 Top 10 GitHub Trending"])
 
 # TAB 1: TIN TỨC
-with tab_news:
-    st.header("Phân tích Báo chí & Tác động Thị trường")
-    st.caption(f"Trạng thái: Đang quét **{len(st.session_state.rss_sources)}** nguồn tin. Hệ thống đa luồng đang hoạt động ⚡")
+with tab1:
+    st.subheader(f"Phân tích Báo chí ({time_filter})")
     
-    with st.spinner(f"Đang cào dữ liệu từ ngày {selected_date.strftime('%d/%m/%Y')}..."):
-        news_items = get_news_and_research(st.session_state.rss_sources, selected_date)
+    news_response = supabase.table("news").select("*").gte("created_at", start_date).order("created_at", desc=True).execute()
+    news_data = news_response.data
     
-    if news_items:
-        st.success(f"Đã tìm thấy **{len(news_items)}** bài viết mới từ {selected_date.strftime('%d/%m/%Y')}.")
-        
-        top_articles_for_ai = news_items[:10]
-        raw_text = "\n".join([f"- Tiêu đề: {item['title']}\nTóm tắt: {item['summary']}" for item in top_articles_for_ai])
-        
-        prompt_news = f"""
-        Bạn là chuyên gia phân tích tài chính và giao dịch chênh lệch thông tin.
-        Dữ liệu {len(top_articles_for_ai)} tin tức mới nhất hôm nay:
-        {raw_text}
-        
-        Viết báo cáo ngắn:
-        1. Giao dịch Chênh lệch thông tin: Tác động đến giá thị trường/cổ phiếu/ngành nào.
-        2. Mức độ tác động: (Cao/Trung bình/Thấp).
-        """
-        
-        with st.spinner("AI GPT-OSS 120B đang phân tích tác động thị trường..."):
-            ai_analysis = analyze_with_ai(prompt_news)
-        
-        st.subheader("🤖 Đánh giá từ chuyên gia AI (GPT-OSS 120B)")
-        st.info(ai_analysis)
-        
-        st.markdown("---")
-        st.subheader("📋 Danh sách bài viết")
-        for item in news_items:
-            time_str = item['date'].strftime('%H:%M %d/%m')
-            with st.expander(f"[{time_str}] {item['title']}"):
-                st.write(item['summary'])
-                st.markdown(f"[🔗 Đọc toàn bộ]({item['link']})")
-    else:
-        st.warning(f"Chưa có bài báo nào mới từ ngày {selected_date.strftime('%d/%m/%Y')}.")
+    st.info(f"Đã tìm thấy **{len(news_data)}** bài viết trong hệ thống lưu trữ thuộc khoảng thời gian: {time_filter}.")
+    
+    if len(news_data) > 0:
+        for item in news_data:
+            with st.expander(f"📌 {item['title']}"):
+                st.write(f"**Ngày đăng gốc:** {item['published_date']}")
+                st.write(f"**Nguồn RSS:** {item['source']}")
+                st.markdown(f"🔗 [Bấm vào đây để đọc bài báo trên trình duyệt]({item['link']})")
+                
+                if st.button("🔍 Kiểm tra bài báo còn tồn tại không?", key=f"check_{item['id']}"):
+                    try:
+                        r = requests.head(item['link'], timeout=5, allow_redirects=True)
+                        if r.status_code < 400:
+                            st.success("🟢 BÀI BÁO ĐANG HOẠT ĐỘNG (Web vẫn còn bài này)")
+                        else:
+                            st.error(f"🔴 LỖI {r.status_code}: Bài báo có thể đã bị xóa, ẩn, hoặc web chặn truy cập!")
+                    except Exception:
+                        st.error("🔴 LỖI MẠNG: Không thể kết nối tới trang báo này!")
 
 # TAB 2: GITHUB TRENDING
-with tab_github:
-    st.header("Phân tích Công nghệ Đột phá & Lịch sử Tăng trưởng")
+with tab2:
+    st.subheader(f"Dự án Công nghệ Nổi bật ({time_filter})")
     
-    with st.spinner("Đang tải dữ liệu GitHub..."):
-        repos = get_github_trending()
+    period_map = {"Hôm nay": "daily", "Tuần này": "weekly", "Tháng này": "monthly"}
+    selected_period = period_map[time_filter]
+    
+    git_response = supabase.table("github_trending").select("*").eq("period", selected_period).order("fetched_date", desc=True).limit(10).execute()
+    git_data = git_response.data
+    
+    if len(git_data) > 0:
+        df = pd.DataFrame(git_data)
+        df['Trend Score'] = range(len(df), 0, -1) 
         
-    if repos:
-        df = pd.DataFrame(repos)
-        
-        # HƯỚNG 1: Nhúng link thẳng vào tên dự án bằng thẻ HTML <a>
-        df['name_with_link'] = df.apply(lambda x: f"<a href='{x['link']}'>{x['name']}</a>", axis=1)
-        
-        fig = px.bar(
-            df, 
-            x='stars', 
-            y='name_with_link', # Thay thế trục Y bằng cột tên đã gắn link
-            orientation='h',
-            title='Top 10 Dự án tăng sao nhiều nhất (24h qua)',
-            labels={'stars': 'Số sao tăng trong 24h', 'name_with_link': 'Dự án'},
-            color='stars',
-            color_continuous_scale='Greens'
-        )
-        # Cập nhật giao diện: Sắp xếp biểu đồ và ẩn tiêu đề trục Y cho gọn
-        fig.update_layout(
-            yaxis={'categoryorder':'total ascending'},
-            yaxis_title=None 
-        )
+        fig = px.bar(df, x='Trend Score', y='repo_name', orientation='h', 
+                     title=f"Biểu đồ Xu hướng ({time_filter})", text='repo_name')
+        fig.update_yaxes(autorange="reversed")
         st.plotly_chart(fig, use_container_width=True)
         
-        # Đã xóa bỏ hoàn toàn phần danh sách liệt kê chi tiết dự án ở đây
-        
-        st.markdown("---")
-        repo_text = "\n".join([f"- {r['name']} (+{r['stars']} stars)" for r in repos])
-        prompt_github = f"""
-        Danh sách Top 10 dự án GitHub tăng trưởng nhanh nhất:
-        {repo_text}
-        
-        Đánh giá: Dự án nào có tiềm năng đột phá làm thay đổi thị trường/công nghệ? Lý do tăng sao?
-        """
-        
-        with st.spinner("AI GPT-OSS 120B đang đánh giá tiềm năng thay đổi thị trường..."):
-            ai_github_analysis = analyze_with_ai(prompt_github)
-            
-        st.subheader("💡 Đánh giá Tiềm năng Thay đổi Thị trường từ AI (GPT-OSS 120B)")
-        st.success(ai_github_analysis)
+        st.write("### Chi tiết các dự án:")
+        for item in git_data:
+            with st.expander(f"📦 {item['repo_name']}"):
+                st.write(f"**Mô tả:** {item['description']}")
+                st.markdown(f"🔗 [Truy cập Mã nguồn (GitHub)]({item['repo_link']})")
+                
+                if st.button("🔍 Kiểm tra Repo còn tồn tại không?", key=f"git_{item['id']}"):
+                    try:
+                        r = requests.head(item['repo_link'], timeout=5, allow_redirects=True)
+                        if r.status_code < 400:
+                            st.success("🟢 Dự án vẫn hoạt động bình thường!")
+                        else:
+                            st.error(f"🔴 Lỗi {r.status_code}: Repository này đã bị xóa hoặc chuyển sang Private!")
+                    except Exception:
+                        st.error("🔴 Không thể kết nối tới GitHub!")
+    else:
+        st.warning(f"Chưa có dữ liệu GitHub cho '{time_filter}'. Hệ thống đang tự động cào ngầm, vui lòng đợi và tải lại trang!")
