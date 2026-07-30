@@ -490,15 +490,71 @@ with st.sidebar:
     st.header("⚙️ Bảng Điều Khiển")
 
     with st.expander("🔗 Quản lý nguồn RSS", expanded=True):
-        new_link = st.text_input("Thêm link RSS mới:", placeholder="https://vnexpress.net/rss/...", key="new_rss_input")
-        if st.button("➕ Thêm nguồn", use_container_width=True):
-            ok, msg = add_rss_source(new_link)
-            if ok:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
+        st.subheader("➕ Thêm nguồn RSS")
 
+tab1, tab2 = st.tabs(["Thêm 1 link", "Quick Import"])
+
+with tab1:
+    new_link = st.text_input(
+        "Link RSS",
+        placeholder="https://vnexpress.net/rss/..."
+    )
+
+    if st.button("➕ Thêm nguồn", use_container_width=True):
+        ok, msg = add_rss_source(new_link)
+
+        if ok:
+            st.success(msg)
+            st.rerun()
+        else:
+            st.error(msg)
+
+with tab2:
+
+    rss_text = st.text_area(
+        "Dán nhiều link (mỗi dòng một link)",
+        height=180,
+        placeholder="""https://vnexpress.net/rss/kinh-doanh.rss
+https://vnexpress.net/rss/the-gioi.rss
+https://techcrunch.com/feed"""
+    )
+
+    if st.button("🚀 Import tất cả", use_container_width=True):
+
+        imported = 0
+        duplicated = 0
+        invalid = 0
+
+        urls = [
+            u.strip()
+            for u in rss_text.splitlines()
+            if u.strip()
+        ]
+
+        for url in urls:
+
+            if not url.startswith(("http://", "https://")):
+                invalid += 1
+                continue
+
+            ok, _ = add_rss_source(url)
+
+            if ok:
+                imported += 1
+            else:
+                duplicated += 1
+
+        st.success(
+            f"""
+✅ Imported: {imported}
+
+🔁 Duplicate: {duplicated}
+
+❌ Invalid: {invalid}
+"""
+        )
+
+        st.rerun()
         st.divider()
         sources = get_active_rss_sources()
         st.caption(f"Đang theo dõi **{len(sources)}** nguồn RSS")
