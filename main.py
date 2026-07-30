@@ -9,7 +9,6 @@ import pandas as pd
 from groq import Groq
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from xml.etree import ElementTree as ET
-from datetime import datetime
 # ==========================================
 # CẤU HÌNH TRANG & GIAO DIỆN
 # ==========================================
@@ -110,17 +109,15 @@ def add_rss_source(url: str):
     url = url.strip()
     if not url:
         return False, "Link trống."
+
     try:
-        supabase.table("rss_sources").insert({"url": url, "is_active": True}).execute()
-        name, article_count = get_rss_info(url)
         supabase.table("rss_sources").insert({
-            "name": name if name else url,
             "url": url,
-            "is_active": True,
-            "last_checked": datetime.now().isoformat(),
-            "last_article_count": article_count
+            "is_active": True
         }).execute()
+
         return True, "Đã thêm nguồn mới!"
+
     except Exception:
         return False, "Không thêm được — link có thể đã tồn tại."
 
@@ -625,7 +622,7 @@ https://techcrunch.com/feed"""
                         display = display[:42] + "..."
                     st.text(display)
 
-with c2:
+                with c2:
 
     if st.button("🔍", key=f"check_{src['id']}"):
 
@@ -636,7 +633,7 @@ with c2:
         else:
             st.error("RSS lỗi hoặc không còn tồn tại")
 
-with c3:
+                with c3:
 
     if st.button("🗑️", key=f"del_{src['id']}"):
 
