@@ -76,6 +76,22 @@ MAX_WORKERS = 15          # so thread song song khi cao RSS
 ANALYSIS_WORKERS = 8      # so thread song song khi goi Groq phan tich (thap hon de tranh rate-limit)
 
 # ==========================================
+# CHUẨN HÓA METADATA AI (category / tags / sentiment / importance)
+# ==========================================
+DEFAULT_CATEGORY = "Other"
+DEFAULT_SENTIMENT = "Neutral"
+DEFAULT_IMPORTANCE = 5
+MAX_TAGS = 5
+
+VALID_CATEGORIES = {
+    "AI", "Startup", "Finance", "Stock", "Crypto", "Cloud",
+    "Cybersecurity", "Science", "Healthcare", "Semiconductor",
+    "Robotics", "Energy", "Space", "Gaming", "Education",
+    "Government", "Biotech", "Other",
+}
+VALID_SENTIMENTS = {"Positive", "Neutral", "Negative"}
+
+# ==========================================
 # QUẢN LÝ NGUỒN RSS (đọc/ghi qua Supabase, không dùng links.txt nữa)
 # ==========================================
 def get_active_rss_sources():
@@ -137,8 +153,38 @@ def check_rss_status(url):
 # ==========================================
 # PHÂN TÍCH AI DÙNG CHUNG (Groq) - trả về JSON có cấu trúc
 # ==========================================
+def _normalize_metadata(data: dict) -> dict:
+    """
+    Chuẩn hóa 4 trường metadata mới (category/tags/sentiment/importance).
+    Luôn trả về giá trị hợp lệ, không bao giờ để None hoặc sai kiểu lọt xuống DB.
+    """
+    category = data.get("category")
+    if not isinstance(category, str) or category not in VALID_CATEGORIES:
+        category = DEFAULT_CATEGORY
+    data["category"] = category
+
+    tags = data.get("tags")
+    if not isinstance(tags, list):
+        tags = []
+    tags = [str(t).strip() for t in tags if str(t).strip()]
+    data["tags"] = tags[:MAX_TAGS]
+
+    sentiment = data.get("sentiment")
+    if not isinstance(sentiment, str) or sentiment not in VALID_SENTIMENTS:
+        sentiment = DEFAULT_SENTIMENT
+    data["sentiment"] = sentiment
+
+    try:
+        importance = int(data.get("importance"))
+    except (TypeError, ValueError):
+        importance = DEFAULT_IMPORTANCE
+    data["importance"] = max(1, min(10, importance))
+
+    return data
+
+
 def _parse_ai_json(raw_response: str):
-    """Chuẩn hóa phản hồi của Groq thành dict {tom_tat, anh_huong_thi_truong, diem_noi_bat}."""
+    """Chuẩn hóa phản hồi của Groq thành dict đầy đủ metadata, luôn có default an toàn."""
     if not raw_response:
         return None
 
@@ -155,10 +201,15 @@ def _parse_ai_json(raw_response: str):
         data.setdefault("tom_tat", "")
         data.setdefault("anh_huong_thi_truong", "")
         data.setdefault("diem_noi_bat", [])
-        return data
+        return _normalize_metadata(data)
     except Exception:
         # Nếu model trả về không đúng JSON, vẫn lưu lại nội dung thô vào tom_tat
-        return {"tom_tat": text[:600], "anh_huong_thi_truong": "", "diem_noi_bat": []}
+        # và áp dụng default cho toàn bộ metadata để tránh lỗi ở bước lưu DB.
+        return _normalize_metadata({
+            "tom_tat": text[:600],
+            "anh_huong_thi_truong": "",
+            "diem_noi_bat": [],
+        })
 
 
 def _analyze_with_groq(raw_text: str, subject_type: str):
@@ -167,6 +218,7 @@ def _analyze_with_groq(raw_text: str, subject_type: str):
         return None
 
     if subject_type == "news":
+        categories_str = ", ".join(sorted(VALID_CATEGORIES))
         system_prompt = (
             "Bạn là chuyên gia phân tích tin tức tài chính/công nghệ. "
             "Đọc nội dung bài báo được cung cấp và trả lời DUY NHẤT bằng JSON hợp lệ, "
@@ -174,7 +226,11 @@ def _analyze_with_groq(raw_text: str, subject_type: str):
             '{"tom_tat": "tóm tắt nội dung chính trong 2-4 câu", '
             '"anh_huong_thi_truong": "phân tích tác động có thể có đến thị trường/ngành liên quan trong 1-3 câu — '
             "nếu không có tác động rõ ràng thì ghi 'Không có tác động thị trường rõ ràng'\", "
-            '"diem_noi_bat": ["điểm/số liệu nổi bật 1", "điểm nổi bật 2", "điểm nổi bật 3"]}'
+            '"diem_noi_bat": ["điểm/số liệu nổi bật 1", "điểm nổi bật 2", "điểm nổi bật 3"], '
+            f'"category": "CHỌN DUY NHẤT một giá trị trong danh sách sau (viết đúng chính tả, đúng hoa/thường): {categories_str}", '
+            '"tags": ["tối đa 5 từ khóa liên quan, ví dụ tên công ty/công nghệ/sản phẩm/quốc gia"], '
+            '"sentiment": "CHỌN DUY NHẤT một trong: Positive, Neutral, Negative", '
+            '"importance": "một SỐ NGUYÊN từ 1 đến 10 thể hiện mức độ quan trọng của bài viết đối với thị trường/ngành"}'
         )
     else:
         system_prompt = (
@@ -247,12 +303,31 @@ def _build_news_analysis(article: dict):
     return _analyze_with_groq(combined, "news")
 
 
+def _apply_news_metadata(article: dict, analysis: dict | None):
+    """
+    Gắn ai_analysis + 4 cột metadata riêng (category/tags/sentiment/importance) vào article,
+    để lưu trực tiếp vào bảng `news`. Luôn có default nếu AI không phân tích được.
+    """
+    article["ai_analysis"] = analysis
+    if analysis:
+        article["category"] = analysis.get("category", DEFAULT_CATEGORY)
+        article["tags"] = analysis.get("tags", [])
+        article["sentiment"] = analysis.get("sentiment", DEFAULT_SENTIMENT)
+        article["importance"] = analysis.get("importance", DEFAULT_IMPORTANCE)
+    else:
+        article["category"] = DEFAULT_CATEGORY
+        article["tags"] = []
+        article["sentiment"] = DEFAULT_SENTIMENT
+        article["importance"] = DEFAULT_IMPORTANCE
+    return article
+
+
 def fetch_and_save_news(links):
     """
     1) Cào + parse tất cả link RSS song song.
     2) Loại bỏ bài đã có sẵn trong DB (tránh phân tích lại bài cũ).
-    3) Phân tích AI (Groq) song song CHỈ cho bài thật sự mới.
-    4) Ghi 1 lần bằng upsert hàng loạt.
+    3) Phân tích AI (Groq) song song CHỈ cho bài thật sự mới -> sinh summary + metadata.
+    4) Ghi 1 lần bằng upsert hàng loạt (bao gồm cả cột category/tags/sentiment/importance).
     """
     all_articles = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -291,9 +366,10 @@ def fetch_and_save_news(links):
             for future in as_completed(future_to_article):
                 article = future_to_article[future]
                 try:
-                    article["ai_analysis"] = future.result()
+                    analysis = future.result()
                 except Exception:
-                    article["ai_analysis"] = None
+                    analysis = None
+                _apply_news_metadata(article, analysis)
 
     payload = [
         {k: v for k, v in a.items() if k != "_rss_fallback_text"}
@@ -480,6 +556,24 @@ def render_ai_analysis_block(analysis: dict):
             st.markdown(f"- {p}")
 
 
+def render_metadata_badges(item: dict):
+    """
+    Hiển thị nhanh 4 metadata đã được lưu trực tiếp vào bảng news
+    (category / sentiment / importance / tags) — giúp kiểm chứng pipeline hoạt động đúng.
+    """
+    category = item.get("category") or DEFAULT_CATEGORY
+    sentiment = item.get("sentiment") or DEFAULT_SENTIMENT
+    importance = item.get("importance", DEFAULT_IMPORTANCE)
+    tags = item.get("tags") or []
+
+    sentiment_icon = {"Positive": "🟢", "Neutral": "⚪", "Negative": "🔴"}.get(sentiment, "⚪")
+
+    line = f"`{category}`&nbsp;&nbsp;·&nbsp;&nbsp;{sentiment_icon} {sentiment}&nbsp;&nbsp;·&nbsp;&nbsp;⭐ {importance}/10"
+    if tags:
+        line += "&nbsp;&nbsp;·&nbsp;&nbsp;🏷️ " + ", ".join(tags)
+    st.markdown(f'<div style="font-size:13px; color:#999; margin-bottom:6px;">{line}</div>', unsafe_allow_html=True)
+
+
 def render_time_filter(prefix: str):
     """
     Bộ lọc thời gian ĐỘC LẬP cho từng tab (tin tức / github).
@@ -650,6 +744,7 @@ with tab1:
                     unsafe_allow_html=True,
                 )
 
+                render_metadata_badges(item)
                 render_ai_analysis_block(item.get("ai_analysis"))
 
                 col1, col2 = st.columns([1, 1])
