@@ -596,7 +596,7 @@ https://techcrunch.com/feed"""
                         display = display[:42] + "..."
                     st.text(display)
 
-               with c2:
+with c2:
 
     if st.button("🔍", key=f"check_{src['id']}"):
 
