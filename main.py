@@ -9,6 +9,7 @@ import pandas as pd
 from groq import Groq
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from xml.etree import ElementTree as ET
+from datetime import datetime
 # ==========================================
 # CẤU HÌNH TRANG & GIAO DIỆN
 # ==========================================
@@ -105,13 +106,19 @@ def get_rss_info(url: str):
 
     except Exception:
         return None, 0
-st.write(get_rss_info("https://techcrunch.com/feed"))
 def add_rss_source(url: str):
     url = url.strip()
     if not url:
         return False, "Link trống."
     try:
-        supabase.table("rss_sources").insert({"url": url, "is_active": True}).execute()
+        name, article_count = get_rss_info(url)
+        supabase.table("rss_sources").insert({
+            "name": name if name else url,
+            "url": url,
+            "is_active": True,
+            "last_checked": datetime.now().isoformat(),
+            "last_article_count": article_count
+        }).execute()
         return True, "Đã thêm nguồn mới!"
     except Exception:
         return False, "Không thêm được — link có thể đã tồn tại."
