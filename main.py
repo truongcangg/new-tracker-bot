@@ -485,90 +485,114 @@ def render_time_filter(prefix: str):
 # 1. HIỂN THỊ GIAO DIỆN NGAY LẬP TỨC (UI FIRST)
 # ==========================================
 
-# --- SIDEBAR: chỉ còn quản lý nguồn RSS + trạng thái đồng bộ ---
+# --- SIDEBAR: Quản lý RSS + trạng thái đồng bộ ---
 with st.sidebar:
     st.header("⚙️ Bảng Điều Khiển")
 
     with st.expander("🔗 Quản lý nguồn RSS", expanded=True):
-        st.subheader("➕ Thêm nguồn RSS")
 
-tab1, tab2 = st.tabs(["Thêm 1 link", "Quick Import"])
+        tab_add, tab_import = st.tabs(["➕ Thêm 1 link", "📥 Quick Import"])
 
-with tab1:
-    new_link = st.text_input(
-        "Link RSS",
-        placeholder="https://vnexpress.net/rss/..."
-    )
+        # ======================
+        # THÊM 1 LINK
+        # ======================
+        with tab_add:
 
-    if st.button("➕ Thêm nguồn", use_container_width=True):
-        ok, msg = add_rss_source(new_link)
+            new_link = st.text_input(
+                "Link RSS",
+                placeholder="https://vnexpress.net/rss/..."
+            )
 
-        if ok:
-            st.success(msg)
-            st.rerun()
-        else:
-            st.error(msg)
+            if st.button("➕ Thêm nguồn", use_container_width=True):
 
-with tab2:
+                ok, msg = add_rss_source(new_link)
 
-    rss_text = st.text_area(
-        "Dán nhiều link (mỗi dòng một link)",
-        height=180,
-        placeholder="""https://vnexpress.net/rss/kinh-doanh.rss
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+        # ======================
+        # QUICK IMPORT
+        # ======================
+        with tab_import:
+
+            rss_text = st.text_area(
+                "Dán nhiều link (mỗi dòng một link)",
+                height=180,
+                placeholder="""https://vnexpress.net/rss/kinh-doanh.rss
 https://vnexpress.net/rss/the-gioi.rss
 https://techcrunch.com/feed"""
-    )
+            )
 
-    if st.button("🚀 Import tất cả", use_container_width=True):
+            if st.button("🚀 Import tất cả", use_container_width=True):
 
-        imported = 0
-        duplicated = 0
-        invalid = 0
+                imported = 0
+                duplicated = 0
+                invalid = 0
 
-        urls = [
-            u.strip()
-            for u in rss_text.splitlines()
-            if u.strip()
-        ]
+                urls = [
+                    u.strip()
+                    for u in rss_text.splitlines()
+                    if u.strip()
+                ]
 
-        for url in urls:
+                for url in urls:
 
-            if not url.startswith(("http://", "https://")):
-                invalid += 1
-                continue
+                    if not url.startswith(("http://", "https://")):
+                        invalid += 1
+                        continue
 
-            ok, _ = add_rss_source(url)
+                    ok, _ = add_rss_source(url)
 
-            if ok:
-                imported += 1
-            else:
-                duplicated += 1
+                    if ok:
+                        imported += 1
+                    else:
+                        duplicated += 1
 
-        st.success(
-            f"""
+                st.success(
+                    f"""
 ✅ Imported: {imported}
 
 🔁 Duplicate: {duplicated}
 
 ❌ Invalid: {invalid}
 """
-        )
+                )
 
-        st.rerun()
+                st.rerun()
+
         st.divider()
+
+        # ======================
+        # DANH SÁCH RSS
+        # ======================
         sources = get_active_rss_sources()
-        st.caption(f"Đang theo dõi **{len(sources)}** nguồn RSS")
-        for src in sources:
-            c1, c2 = st.columns([5, 1])
-            with c1:
-                display_url = src["url"] if len(src["url"]) <= 42 else src["url"][:39] + "..."
-                st.text(display_url)
-            with c2:
-                if st.button("🗑️", key=f"del_src_{src['id']}"):
-                    delete_rss_source(src["id"])
-                    st.rerun()
+
+        st.caption(f"📡 Đang theo dõi **{len(sources)}** nguồn RSS")
+
+        if len(sources) == 0:
+            st.info("Chưa có nguồn RSS nào.")
+        else:
+
+            for src in sources:
+
+                c1, c2 = st.columns([5, 1])
+
+                with c1:
+                    display = src["url"]
+                    if len(display) > 45:
+                        display = display[:42] + "..."
+                    st.text(display)
+
+                with c2:
+                    if st.button("🗑️", key=f"del_{src['id']}"):
+                        delete_rss_source(src["id"])
+                        st.rerun()
 
     st.divider()
+
     status_placeholder = st.empty()
 
 # --- TABS (mỗi tab có bộ lọc thời gian RIÊNG) ---
