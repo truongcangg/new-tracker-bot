@@ -596,18 +596,23 @@ https://techcrunch.com/feed"""
                         display = display[:42] + "..."
                     st.text(display)
 
-                with c2:
-                    if st.button("🔍", key=f"check_{src['id']}"):
+               with c2:
+
+    if st.button("🔍", key=f"check_{src['id']}"):
 
         ok = check_rss_status(src["url"])
 
-                    if ok:
-        st.success("RSS hoạt động")
-                    else:
-        st.error("RSS lỗi hoặc không còn tồn tại")
-                    if st.button("🗑️", key=f"del_{src['id']}"):
-                        delete_rss_source(src["id"])
-                        st.rerun()
+        if ok:
+            st.success("RSS hoạt động")
+        else:
+            st.error("RSS lỗi hoặc không còn tồn tại")
+
+with c3:
+
+    if st.button("🗑️", key=f"del_{src['id']}"):
+
+        delete_rss_source(src["id"])
+        st.rerun()
 
     st.divider()
 
