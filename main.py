@@ -84,7 +84,28 @@ def get_active_rss_sources():
     except Exception:
         return []
 
+def get_rss_info(url: str):
+    """
+    Trả về:
+    (name, article_count)
 
+    Nếu RSS lỗi:
+    (None, 0)
+    """
+    try:
+        feed = feedparser.parse(url)
+
+        if feed.bozo:
+            return None, 0
+
+        name = feed.feed.get("title", url)
+        article_count = len(feed.entries)
+
+        return name, article_count
+
+    except Exception:
+        return None, 0
+print(get_rss_info("https://techcrunch.com/feed"))
 def add_rss_source(url: str):
     url = url.strip()
     if not url:
