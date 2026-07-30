@@ -610,6 +610,162 @@ def render_time_filter(prefix: str):
 
 
 # ==========================================
+# [MỚI] SEARCH + SMART FILTER + DASHBOARD THỐNG KÊ (chỉ xử lý client-side, không đổi DB/crawler)
+# ==========================================
+def _get_news_summary_text(item: dict) -> str:
+    analysis = item.get("ai_analysis") or {}
+    if isinstance(analysis, str):
+        try:
+            analysis = json.loads(analysis)
+        except Exception:
+            analysis = {}
+    return (analysis.get("tom_tat") or "") if isinstance(analysis, dict) else ""
+
+
+def render_news_search_and_filter_controls(prefix: str, data: list):
+    """
+    Vẽ ô search + các bộ lọc smart filter cho tab tin tức.
+    Trả về dict các điều kiện lọc để áp dụng lên data.
+    """
+    all_categories = sorted({d.get("category") or DEFAULT_CATEGORY for d in data})
+    all_sentiments = sorted({d.get("sentiment") or DEFAULT_SENTIMENT for d in data})
+    all_sources = sorted({d.get("source") or "" for d in data if d.get("source")})
+    all_tags = sorted({t for d in data for t in (d.get("tags") or [])})
+
+    search_query = st.text_input(
+        "🔎 Tìm kiếm (tiêu đề / tóm tắt / tags / category / nguồn)",
+        key=f"{prefix}_search",
+        placeholder="VD: Nvidia, lãi suất, AI chip...",
+    )
+
+    with st.expander("⚙️ Smart Filter", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            f_category = st.multiselect("Category", all_categories, key=f"{prefix}_f_category")
+            f_sentiment = st.multiselect("Sentiment", all_sentiments, key=f"{prefix}_f_sentiment")
+            f_tags = st.multiselect("Tags", all_tags, key=f"{prefix}_f_tags")
+        with c2:
+            f_source = st.multiselect(
+                "Nguồn (source)",
+                all_sources,
+                key=f"{prefix}_f_source",
+                format_func=lambda u: u[:45] + "..." if len(u) > 45 else u,
+            )
+            f_importance = st.slider("Importance", 1, 10, (1, 10), key=f"{prefix}_f_importance")
+
+    return {
+        "search": search_query.strip().lower(),
+        "category": f_category,
+        "sentiment": f_sentiment,
+        "tags": f_tags,
+        "source": f_source,
+        "importance_range": f_importance,
+    }
+
+
+def apply_news_filters(data: list, filters: dict) -> list:
+    result = []
+    for item in data:
+        if filters["category"] and (item.get("category") or DEFAULT_CATEGORY) not in filters["category"]:
+            continue
+        if filters["sentiment"] and (item.get("sentiment") or DEFAULT_SENTIMENT) not in filters["sentiment"]:
+            continue
+        if filters["source"] and (item.get("source") or "") not in filters["source"]:
+            continue
+
+        item_tags = item.get("tags") or []
+        if filters["tags"] and not set(filters["tags"]).intersection(item_tags):
+            continue
+
+        importance = item.get("importance", DEFAULT_IMPORTANCE) or DEFAULT_IMPORTANCE
+        lo, hi = filters["importance_range"]
+        if not (lo <= importance <= hi):
+            continue
+
+        if filters["search"]:
+            haystack = " ".join([
+                item.get("title", ""),
+                _get_news_summary_text(item),
+                item.get("category", ""),
+                item.get("source", ""),
+                " ".join(item_tags),
+            ]).lower()
+            if filters["search"] not in haystack:
+                continue
+
+        result.append(item)
+    return result
+
+
+def render_news_dashboard_stats(data: list):
+    """Dashboard thống kê: Category / Sentiment / Importance / Top Tags / Top Sources / Daily count."""
+    if not data:
+        return
+
+    df = pd.DataFrame(data)
+
+    with st.expander("📊 Thống kê tổng quan", expanded=False):
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown("**📂 Category Distribution**")
+            cat_counts = df["category"].fillna(DEFAULT_CATEGORY).value_counts()
+            st.bar_chart(cat_counts)
+
+        with col2:
+            st.markdown("**😊 Sentiment Distribution**")
+            sent_counts = df["sentiment"].fillna(DEFAULT_SENTIMENT).value_counts()
+            st.bar_chart(sent_counts)
+
+        with col3:
+            st.markdown("**⭐ Importance Distribution**")
+            imp_counts = df["importance"].fillna(DEFAULT_IMPORTANCE).astype(int).value_counts().sort_index()
+            st.bar_chart(imp_counts)
+
+        col4, col5 = st.columns(2)
+
+        with col4:
+            st.markdown("**🏷️ Top Tags**")
+            tag_series = df["tags"].dropna().explode()
+            tag_series = tag_series[tag_series.astype(bool)]
+            if len(tag_series) > 0:
+                st.bar_chart(tag_series.value_counts().head(10))
+            else:
+                st.caption("Chưa có tags.")
+
+        with col5:
+            st.markdown("**📡 Top Sources**")
+            src_counts = df["source"].fillna("Unknown").value_counts().head(10)
+            src_counts.index = [s[:35] + "..." if len(s) > 35 else s for s in src_counts.index]
+            st.bar_chart(src_counts)
+
+        if "created_at" in df.columns:
+            st.markdown("**📅 Số bài viết theo ngày**")
+            dates = pd.to_datetime(df["created_at"], errors="coerce").dt.date
+            daily_counts = dates.value_counts().sort_index()
+            st.bar_chart(daily_counts)
+
+
+def render_github_search_control(prefix: str):
+    return st.text_input(
+        "🔎 Tìm kiếm dự án (tên repo / mô tả)",
+        key=f"{prefix}_search",
+        placeholder="VD: llm, agent, rust...",
+    ).strip().lower()
+
+
+def apply_github_search(data: list, query: str) -> list:
+    if not query:
+        return data
+    result = []
+    for item in data:
+        haystack = f"{item.get('repo_name', '')} {item.get('description', '')}".lower()
+        if query in haystack:
+            result.append(item)
+    return result
+
+
+# ==========================================
 # 1. HIỂN THỊ GIAO DIỆN NGAY LẬP TỨC (UI FIRST)
 # ==========================================
 
@@ -733,10 +889,17 @@ with tab1:
     )
     news_data = news_response.data
 
-    st.metric("📰 Tổng số bài viết", len(news_data))
+    # [MỚI] Dashboard thống kê trên toàn bộ dữ liệu trong khoảng thời gian đã chọn
+    render_news_dashboard_stats(news_data)
 
-    if len(news_data) > 0:
-        for item in news_data:
+    # [MỚI] Search + Smart Filter
+    news_filters = render_news_search_and_filter_controls("news", news_data)
+    filtered_news = apply_news_filters(news_data, news_filters)
+
+    st.metric("📰 Tổng số bài viết", f"{len(filtered_news)} / {len(news_data)}")
+
+    if len(filtered_news) > 0:
+        for item in filtered_news:
             with st.container(border=True):
                 st.markdown(f"#### 📌 {item['title']}")
                 st.markdown(
@@ -764,7 +927,7 @@ with tab1:
                         except Exception:
                             st.error("🔴 LỖI MẠNG — không kiểm tra được, nhưng phân tích AI ở trên vẫn còn.")
     else:
-        st.info("Chưa có bài viết nào trong khoảng thời gian này.")
+        st.info("Không tìm thấy bài viết nào khớp với bộ lọc / từ khóa tìm kiếm hiện tại.")
 
 # TAB 2: GITHUB TRENDING
 with tab2:
@@ -797,6 +960,10 @@ with tab2:
 
     git_data = git_response.data
 
+    # [MỚI] Search cho GitHub trending
+    git_search_query = render_github_search_control("github")
+    git_data = apply_github_search(git_data, git_search_query)
+
     if len(git_data) > 0:
         df = pd.DataFrame(git_data)
         df = df.drop_duplicates(subset=["repo_link"]).head(10)
@@ -828,7 +995,7 @@ with tab2:
                             st.error("🔴 Lỗi kết nối!")
     else:
         st.warning(
-            "Chưa có dữ liệu cho mốc thời gian này. "
+            "Chưa có dữ liệu cho mốc thời gian này (hoặc không khớp từ khóa tìm kiếm). "
             "*(Lưu ý: Dữ liệu của những ngày trước khi tạo hệ thống sẽ không tồn tại).*"
         )
 
