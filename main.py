@@ -105,7 +105,7 @@ def get_rss_info(url: str):
 
     except Exception:
         return None, 0
-print(get_rss_info("https://techcrunch.com/feed"))
+st.write(get_rss_info("https://techcrunch.com/feed"))
 def add_rss_source(url: str):
     url = url.strip()
     if not url:
