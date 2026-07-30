@@ -743,7 +743,7 @@ def auto_scrape_data():
     except Exception:
         pass
     fetch_and_save_github()
-    return datetime.datetime.now()
+    return datetime.now()
 
 
 with status_placeholder:
