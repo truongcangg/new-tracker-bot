@@ -222,7 +222,7 @@ def _parse_one_feed(link: str):
             articles.append({
                 "title": entry.title if "title" in entry else "No Title",
                 "link": entry.link if "link" in entry else "",
-                "published_date": entry.published if "published" in entry else datetime.datetime.now().isoformat(),
+                "published_date": entry.published if "published" in entry else datetime.now().isoformat(),
                 "source": link,
                 "is_active": True,
                 "_rss_fallback_text": entry.get("summary", entry.get("description", "")),
@@ -495,7 +495,7 @@ def render_time_filter(prefix: str):
         key=f"{prefix}_filter_mode",
         horizontal=True,
     )
-    now = datetime.datetime.now()
+    now = datetime.now()
 
     if filter_mode == "📅 Theo ngày cụ thể (Lịch)":
         selected_date = st.date_input("Chọn một ngày:", now.date(), key=f"{prefix}_date")
