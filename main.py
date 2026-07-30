@@ -101,7 +101,17 @@ def delete_rss_source(source_id):
         supabase.table("rss_sources").delete().eq("id", source_id).execute()
     except Exception:
         pass
+def check_rss_status(url):
+    try:
+        feed = feedparser.parse(url)
 
+        if len(feed.entries) > 0:
+            return True
+
+        return False
+
+    except Exception:
+        return False
 
 # ==========================================
 # PHÂN TÍCH AI DÙNG CHUNG (Groq) - trả về JSON có cấu trúc
@@ -578,7 +588,7 @@ https://techcrunch.com/feed"""
 
             for src in sources:
 
-                c1, c2 = st.columns([5, 1])
+                c1, c2, c3 = st.columns([5,1,1])
 
                 with c1:
                     display = src["url"]
@@ -587,6 +597,14 @@ https://techcrunch.com/feed"""
                     st.text(display)
 
                 with c2:
+                    if st.button("🔍", key=f"check_{src['id']}"):
+
+        ok = check_rss_status(src["url"])
+
+                    if ok:
+        st.success("RSS hoạt động")
+                    else:
+        st.error("RSS lỗi hoặc không còn tồn tại")
                     if st.button("🗑️", key=f"del_{src['id']}"):
                         delete_rss_source(src["id"])
                         st.rerun()
