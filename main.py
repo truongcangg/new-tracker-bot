@@ -8,7 +8,7 @@ import json
 import pandas as pd
 from groq import Groq
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
+from xml.etree import ElementTree as ET
 # ==========================================
 # CẤU HÌNH TRANG & GIAO DIỆN
 # ==========================================
