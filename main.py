@@ -5,6 +5,8 @@ from bs4 import BeautifulSoup
 from supabase import create_client, Client
 import datetime
 import json
+import time
+import random
 import pandas as pd
 from groq import Groq
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -73,7 +75,24 @@ supabase = init_db()
 groq_client = init_groq()
 
 MAX_WORKERS = 15          # so thread song song khi cao RSS
-ANALYSIS_WORKERS = 8      # so thread song song khi goi Groq phan tich (thap hon de tranh rate-limit)
+ANALYSIS_WORKERS = 5      # so thread song song khi goi Groq phan tich (giam tu 8 -> 5 de tranh rate-limit)
+GROQ_MAX_RETRIES = 4      # so lan thu lai khi Groq bi rate-limit / loi mang tam thoi
+
+# Log lỗi Groq gần nhất trong phiên hiện tại, để hiển thị debug ngay trên UI
+# (không cần vào Streamlit Cloud logs cũng xem được vì sao 1 bài bị None).
+if "groq_error_log" not in st.session_state:
+    st.session_state["groq_error_log"] = []
+
+
+def _log_groq_error(subject_type: str, error: Exception):
+    entry = {
+        "time": datetime.datetime.now().strftime("%H:%M:%S"),
+        "subject_type": subject_type,
+        "error": str(error)[:300],
+    }
+    st.session_state["groq_error_log"].append(entry)
+    # giữ tối đa 50 lỗi gần nhất để không phình session_state
+    st.session_state["groq_error_log"] = st.session_state["groq_error_log"][-50:]
 
 # ==========================================
 # CHUẨN HÓA METADATA AI (category / tags / sentiment / importance)
@@ -243,19 +262,40 @@ def _analyze_with_groq(raw_text: str, subject_type: str):
             '"diem_noi_bat": ["tính năng/điểm nổi bật 1", "điểm nổi bật 2", "điểm nổi bật 3"]}'
         )
 
-    try:
-        completion = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": raw_text[:6000]},
-            ],
-            temperature=0.3,
-            max_tokens=500,
-        )
-        return _parse_ai_json(completion.choices[0].message.content)
-    except Exception:
-        return None
+    last_error = None
+    for attempt in range(GROQ_MAX_RETRIES):
+        try:
+            completion = groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": raw_text[:6000]},
+                ],
+                temperature=0.3,
+                max_tokens=500,
+            )
+            return _parse_ai_json(completion.choices[0].message.content)
+        except Exception as e:
+            last_error = e
+            error_text = str(e).lower()
+            # 429 / rate_limit / too many requests -> co the thu lai sau khi cho
+            is_retryable = (
+                "429" in error_text
+                or "rate" in error_text
+                or "timeout" in error_text
+                or "timed out" in error_text
+                or "connection" in error_text
+            )
+            if is_retryable and attempt < GROQ_MAX_RETRIES - 1:
+                wait_s = (2 ** attempt) + random.uniform(0, 1)
+                time.sleep(wait_s)
+                continue
+            break
+
+    # het luot retry (hoac loi khong retryable) -> ghi log de xem tren UI, tra ve None
+    if last_error is not None:
+        _log_groq_error(subject_type, last_error)
+    return None
 
 
 # ==========================================
@@ -866,6 +906,16 @@ with st.sidebar:
                     if st.button("🗑️", key=f"del_{src['id']}"):
                         delete_rss_source(src["id"])
                         st.rerun()
+
+    st.divider()
+
+    error_log = st.session_state.get("groq_error_log", [])
+    with st.expander(f"🐞 Lỗi phân tích AI gần đây ({len(error_log)})", expanded=False):
+        if not error_log:
+            st.caption("Chưa ghi nhận lỗi nào trong phiên này.")
+        else:
+            for entry in reversed(error_log[-15:]):
+                st.caption(f"[{entry['time']}] ({entry['subject_type']}) {entry['error']}")
 
     st.divider()
     status_placeholder = st.empty()
