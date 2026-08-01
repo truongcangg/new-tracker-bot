@@ -15,6 +15,7 @@ core.py khong import streamlit, nen co the chay boi:
 
 import datetime
 import json
+import os
 import random
 import threading
 import time
@@ -31,10 +32,12 @@ from groq import Groq
 # ==========================================
 MAX_WORKERS = 15                 # so thread song song khi cao RSS
 ANALYSIS_WORKERS = 3             # so thread song song khi goi Groq (giam vi da gop batch)
-BATCH_SIZE = 4                   # so bai bao / repo gop chung trong 1 lan goi Groq
+BATCH_SIZE = 2                   # so bai bao / repo gop chung trong 1 lan goi Groq
 GROQ_MODEL = "llama-3.1-8b-instant"
 GROQ_MAX_RETRIES = 4
 GROQ_MAX_TOKENS_PER_ITEM = 350   # ngan sach output UOC LUONG cho MOI item trong 1 batch
+MAX_NEWS_PER_RUN = int(os.getenv("MAX_NEWS_PER_RUN", "12"))
+MAX_GITHUB_REPOS_PER_RUN = int(os.getenv("MAX_GITHUB_REPOS_PER_RUN", "12"))
 
 DEFAULT_CATEGORY = "Other"
 DEFAULT_SENTIMENT = "Neutral"
@@ -75,13 +78,17 @@ class _GroqBudget:
         self.lock = threading.Lock()
 
     def wait(self, estimated_tokens: int):
+        # Neu uoc luong 1 request da vuot max_tokens/phut, ban cu se doi vo han
+        # vi dieu kien used_tokens + estimated_tokens <= max_tokens khong bao gio dung.
+        # Ghi nhan toi da bang max_tokens de request lon duoc chay khi cua so dang trong.
+        reserved_tokens = min(max(1, estimated_tokens), self.max_tokens)
         while True:
             with self.lock:
                 now = time.monotonic()
                 self.calls = [(t, tok) for t, tok in self.calls if now - t < self.period]
                 used_tokens = sum(tok for _, tok in self.calls)
-                if len(self.calls) < self.max_calls and used_tokens + estimated_tokens <= self.max_tokens:
-                    self.calls.append((now, estimated_tokens))
+                if len(self.calls) < self.max_calls and used_tokens + reserved_tokens <= self.max_tokens:
+                    self.calls.append((now, reserved_tokens))
                     return
                 sleep_for = (self.period - (now - self.calls[0][0])) if self.calls else 1.0
             time.sleep(max(sleep_for, 0.1))
@@ -140,6 +147,26 @@ def _strip_code_fence(text: str) -> str:
         if text.lower().startswith("json"):
             text = text[4:]
     return text.strip()
+
+
+def _loads_model_json(text: str):
+    """Parse JSON tu model mot cach khoan dung hon.
+
+    Groq/LLM doi khi tra ve JSON hop le kem them chu, hoac nhieu object lien tiep
+    lam json.loads bao "Extra data". Ta quet den ky tu bat dau JSON dau tien va
+    raw_decode object/array dau tien de tranh fallback tung item khong can thiet.
+    """
+    text = _strip_code_fence(text)
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(text):
+        if ch not in "[{":
+            continue
+        try:
+            data, _ = decoder.raw_decode(text[idx:])
+            return data
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError("No JSON object or array found", text, 0)
 
 
 def _build_batch_prompt(subject_type: str, count: int) -> str:
@@ -201,7 +228,7 @@ def _analyze_single_with_groq(groq_client, text: str, subject_type: str):
                 max_tokens=GROQ_MAX_TOKENS_PER_ITEM,
             )
             raw = _strip_code_fence(completion.choices[0].message.content)
-            data = json.loads(raw)
+            data = _loads_model_json(raw)
             if isinstance(data, list):
                 data = data[0] if data else {}
             if not isinstance(data, dict):
@@ -246,7 +273,7 @@ def _analyze_batch_with_groq(groq_client, texts: list, subject_type: str):
                 max_tokens=max_output_tokens,
             )
             raw = _strip_code_fence(completion.choices[0].message.content)
-            data = json.loads(raw)
+            data = _loads_model_json(raw)
             if not isinstance(data, list):
                 raise ValueError("Phản hồi không phải mảng JSON")
             return [
@@ -350,17 +377,22 @@ def fetch_and_save_news(supabase: Client, groq_client: Groq, links: list) -> int
             seen.add(a["link"])
             deduped.append(a)
 
-    all_links = [a["link"] for a in deduped if a["link"]]
-    existing_links = set()
-    try:
-        for i in range(0, len(all_links), 200):
-            chunk = all_links[i:i + 200]
-            res = supabase.table("news").select("link").in_("link", chunk).execute()
-            existing_links.update(row["link"] for row in res.data)
-    except Exception:
-        pass
-
-    new_articles = [a for a in deduped if a["link"] not in existing_links]
+    new_articles = []
+    for article in deduped:
+        if len(new_articles) >= MAX_NEWS_PER_RUN:
+            break
+        try:
+            res = (
+                supabase.table("news")
+                .select("link")
+                .eq("link", article["link"])
+                .limit(1)
+                .execute()
+            )
+            if not res.data:
+                new_articles.append(article)
+        except Exception as e:
+            print(f"[core] Không kiểm tra được link news trong DB, bỏ qua để tránh ghi trùng: {e}")
 
     if new_articles:
         texts = [_build_news_text(a) for a in new_articles]
@@ -465,7 +497,7 @@ def fetch_and_save_github(supabase: Client, groq_client: Groq) -> int:
     except Exception:
         pass
 
-    new_repos = [r for r in deduped if (r["repo_link"], r["period"]) not in existing_keys]
+    new_repos = [r for r in deduped if (r["repo_link"], r["period"]) not in existing_keys][:MAX_GITHUB_REPOS_PER_RUN]
 
     if new_repos:
         texts = [_build_repo_text(r) for r in new_repos]

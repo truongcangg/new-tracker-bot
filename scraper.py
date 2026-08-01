@@ -9,14 +9,27 @@ Chay thu cong: SUPABASE_URL=... SUPABASE_KEY=... GROQ_API_KEY=... python scraper
 """
 
 import os
+import signal
 import sys
 import time
 
 import core
 
 
+class ScraperTimeoutError(TimeoutError):
+    pass
+
+
+def _handle_timeout(signum, frame):
+    raise ScraperTimeoutError("Scraper exceeded SCRAPER_TIMEOUT_SECONDS")
+
+
 def main():
     start = time.time()
+    timeout_seconds = int(os.getenv("SCRAPER_TIMEOUT_SECONDS", "780"))
+    if hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, _handle_timeout)
+        signal.alarm(timeout_seconds)
 
     try:
         supabase_url = os.environ["SUPABASE_URL"]
@@ -50,7 +63,13 @@ def main():
 
     elapsed = round(time.time() - start, 1)
     print(f"[scraper] Hoàn tất trong {elapsed}s — {news_count} bài báo mới, {git_count} dự án GitHub mới.")
+    if hasattr(signal, "SIGALRM"):
+        signal.alarm(0)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ScraperTimeoutError as e:
+        print(f"[scraper] LỖI: {e}")
+        sys.exit(124)

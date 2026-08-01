@@ -5,9 +5,14 @@ on:
     - cron: "*/20 * * * *"   # moi 20 phut - GitHub co the tre vai phut so voi lich neu repo it hoat dong
   workflow_dispatch: {}        # cho phep bam "Run workflow" tren tab Actions de chay tay/test
 
+concurrency:
+  group: tracker-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   run-tracker:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
