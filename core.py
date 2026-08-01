@@ -15,6 +15,7 @@ core.py khong import streamlit, nen co the chay boi:
 
 import datetime
 import json
+import os
 import random
 import threading
 import time
@@ -31,10 +32,12 @@ from groq import Groq
 # ==========================================
 MAX_WORKERS = 15                 # so thread song song khi cao RSS
 ANALYSIS_WORKERS = 3             # so thread song song khi goi Groq (giam vi da gop batch)
-BATCH_SIZE = 4                   # so bai bao / repo gop chung trong 1 lan goi Groq
+BATCH_SIZE = 2                   # so bai bao / repo gop chung trong 1 lan goi Groq
 GROQ_MODEL = "llama-3.1-8b-instant"
 GROQ_MAX_RETRIES = 4
 GROQ_MAX_TOKENS_PER_ITEM = 350   # ngan sach output UOC LUONG cho MOI item trong 1 batch
+MAX_NEWS_PER_RUN = int(os.getenv("MAX_NEWS_PER_RUN", "12"))
+MAX_GITHUB_REPOS_PER_RUN = int(os.getenv("MAX_GITHUB_REPOS_PER_RUN", "12"))
 
 DEFAULT_CATEGORY = "Other"
 DEFAULT_SENTIMENT = "Neutral"
@@ -75,13 +78,17 @@ class _GroqBudget:
         self.lock = threading.Lock()
 
     def wait(self, estimated_tokens: int):
+        # Neu uoc luong 1 request da vuot max_tokens/phut, ban cu se doi vo han
+        # vi dieu kien used_tokens + estimated_tokens <= max_tokens khong bao gio dung.
+        # Ghi nhan toi da bang max_tokens de request lon duoc chay khi cua so dang trong.
+        reserved_tokens = min(max(1, estimated_tokens), self.max_tokens)
         while True:
             with self.lock:
                 now = time.monotonic()
                 self.calls = [(t, tok) for t, tok in self.calls if now - t < self.period]
                 used_tokens = sum(tok for _, tok in self.calls)
-                if len(self.calls) < self.max_calls and used_tokens + estimated_tokens <= self.max_tokens:
-                    self.calls.append((now, estimated_tokens))
+                if len(self.calls) < self.max_calls and used_tokens + reserved_tokens <= self.max_tokens:
+                    self.calls.append((now, reserved_tokens))
                     return
                 sleep_for = (self.period - (now - self.calls[0][0])) if self.calls else 1.0
             time.sleep(max(sleep_for, 0.1))
@@ -360,7 +367,7 @@ def fetch_and_save_news(supabase: Client, groq_client: Groq, links: list) -> int
     except Exception:
         pass
 
-    new_articles = [a for a in deduped if a["link"] not in existing_links]
+    new_articles = [a for a in deduped if a["link"] not in existing_links][:MAX_NEWS_PER_RUN]
 
     if new_articles:
         texts = [_build_news_text(a) for a in new_articles]
@@ -465,7 +472,7 @@ def fetch_and_save_github(supabase: Client, groq_client: Groq) -> int:
     except Exception:
         pass
 
-    new_repos = [r for r in deduped if (r["repo_link"], r["period"]) not in existing_keys]
+    new_repos = [r for r in deduped if (r["repo_link"], r["period"]) not in existing_keys][:MAX_GITHUB_REPOS_PER_RUN]
 
     if new_repos:
         texts = [_build_repo_text(r) for r in new_repos]
