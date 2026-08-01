@@ -7,6 +7,7 @@ import datetime
 import json
 import time
 import random
+import threading
 import pandas as pd
 from groq import Groq
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -77,6 +78,35 @@ groq_client = init_groq()
 MAX_WORKERS = 15          # so thread song song khi cao RSS
 ANALYSIS_WORKERS = 5      # so thread song song khi goi Groq phan tich (giam tu 8 -> 5 de tranh rate-limit)
 GROQ_MAX_RETRIES = 4      # so lan thu lai khi Groq bi rate-limit / loi mang tam thoi
+
+
+class _RateLimiter:
+    """
+    Rate limiter dung chung giua cac thread: dam bao khong vuot qua max_calls
+    trong moi cua so period giay (rolling window), bat ke bao nhieu thread cung goi.
+    Dung de giu request toi Groq duoi nguong RPM thuc te (da xac nhan qua dashboard
+    Groq: ~30 requests/phut va ~6.2K tokens/phut cho llama-3.1-8b-instant free tier).
+    """
+    def __init__(self, max_calls: int, period: float):
+        self.max_calls = max_calls
+        self.period = period
+        self.calls = []
+        self.lock = threading.Lock()
+
+    def wait(self):
+        while True:
+            with self.lock:
+                now = time.monotonic()
+                self.calls = [t for t in self.calls if now - t < self.period]
+                if len(self.calls) < self.max_calls:
+                    self.calls.append(now)
+                    return
+                sleep_for = self.period - (now - self.calls[0])
+            time.sleep(max(sleep_for, 0.05))
+
+
+# Gioi han an toan: 20 requests / 60s (thap hon muc 429 quan sat duoc tren dashboard ~25-30)
+_groq_rate_limiter = _RateLimiter(max_calls=20, period=60)
 
 # Log lỗi Groq gần nhất trong phiên hiện tại, để hiển thị debug ngay trên UI
 # (không cần vào Streamlit Cloud logs cũng xem được vì sao 1 bài bị None).
@@ -264,6 +294,7 @@ def _analyze_with_groq(raw_text: str, subject_type: str):
 
     last_error = None
     for attempt in range(GROQ_MAX_RETRIES):
+        _groq_rate_limiter.wait()
         try:
             completion = groq_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
@@ -909,6 +940,8 @@ with st.sidebar:
 
     st.divider()
 
+    force_refresh = st.button("🔄 Buộc chạy lại ngay (bỏ qua cache 15 phút)", use_container_width=True)
+
     error_log = st.session_state.get("groq_error_log", [])
     with st.expander(f"🐞 Lỗi phân tích AI gần đây ({len(error_log)})", expanded=False):
         if not error_log:
@@ -1068,5 +1101,17 @@ def auto_scrape_data():
 
 with status_placeholder:
     with st.spinner("Đang cập nhật nguồn dữ liệu ngầm..."):
-        last_run_time = auto_scrape_data()
+        if force_refresh:
+            # Bo qua cache 15 phut, chay that ngay lap tuc de test / debug Groq
+            try:
+                active_sources = get_active_rss_sources()
+                links = [s["url"] for s in active_sources if s.get("is_active", True)]
+                if links:
+                    fetch_and_save_news(links)
+            except Exception:
+                pass
+            fetch_and_save_github()
+            last_run_time = datetime.datetime.now()
+        else:
+            last_run_time = auto_scrape_data()
     st.success(f"✅ Đã đồng bộ lúc {last_run_time.strftime('%H:%M:%S')}")
