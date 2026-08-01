@@ -1,16 +1,13 @@
 import streamlit as st
-import feedparser
 import requests
-from bs4 import BeautifulSoup
-from supabase import create_client, Client
+import feedparser
 import datetime
 import json
-import time
-import random
-import threading
 import pandas as pd
+from supabase import create_client, Client
 from groq import Groq
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import core  # toan bo logic cao + phan tich AI nam o day, dung chung voi scraper.py (GitHub Actions)
 
 # ==========================================
 # CẤU HÌNH TRANG & GIAO DIỆN
@@ -44,6 +41,15 @@ st.markdown("""
         border-radius: 6px;
         margin: 8px 0;
     }
+    .detail-box {
+        background: rgba(140, 140, 160, 0.06);
+        border-left: 3px solid #8B7FFF;
+        padding: 10px 14px;
+        border-radius: 6px;
+        margin: 8px 0;
+        font-size: 14px;
+        line-height: 1.6;
+    }
     div[data-testid="stMetric"] {
         background: rgba(120, 120, 140, 0.08);
         border-radius: 12px;
@@ -55,7 +61,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>📈 Trading Terminal & Trend Tracker</h1>
-    <p>Bảng điều khiển giao dịch, tin tức & xu hướng công nghệ — cập nhật tự động</p>
+    <p>Bảng điều khiển giao dịch, tin tức & xu hướng công nghệ — cập nhật tự động mỗi 20 phút qua GitHub Actions</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -75,73 +81,13 @@ def init_groq() -> Groq:
 supabase = init_db()
 groq_client = init_groq()
 
-MAX_WORKERS = 15          # so thread song song khi cao RSS
-ANALYSIS_WORKERS = 5      # so thread song song khi goi Groq phan tich (giam tu 8 -> 5 de tranh rate-limit)
-GROQ_MAX_RETRIES = 4      # so lan thu lai khi Groq bi rate-limit / loi mang tam thoi
+# Log lỗi Groq gần nhất khi bấm nút "Chạy ngay" thủ công trong phiên hiện tại
+if "manual_run_log" not in st.session_state:
+    st.session_state["manual_run_log"] = []
 
-
-class _RateLimiter:
-    """
-    Rate limiter dung chung giua cac thread: dam bao khong vuot qua max_calls
-    trong moi cua so period giay (rolling window), bat ke bao nhieu thread cung goi.
-    Dung de giu request toi Groq duoi nguong RPM thuc te (da xac nhan qua dashboard
-    Groq: ~30 requests/phut va ~6.2K tokens/phut cho llama-3.1-8b-instant free tier).
-    """
-    def __init__(self, max_calls: int, period: float):
-        self.max_calls = max_calls
-        self.period = period
-        self.calls = []
-        self.lock = threading.Lock()
-
-    def wait(self):
-        while True:
-            with self.lock:
-                now = time.monotonic()
-                self.calls = [t for t in self.calls if now - t < self.period]
-                if len(self.calls) < self.max_calls:
-                    self.calls.append(now)
-                    return
-                sleep_for = self.period - (now - self.calls[0])
-            time.sleep(max(sleep_for, 0.05))
-
-
-# Gioi han an toan: 20 requests / 60s (thap hon muc 429 quan sat duoc tren dashboard ~25-30)
-_groq_rate_limiter = _RateLimiter(max_calls=20, period=60)
-
-# Log lỗi Groq gần nhất trong phiên hiện tại, để hiển thị debug ngay trên UI
-# (không cần vào Streamlit Cloud logs cũng xem được vì sao 1 bài bị None).
-if "groq_error_log" not in st.session_state:
-    st.session_state["groq_error_log"] = []
-
-
-def _log_groq_error(subject_type: str, error: Exception):
-    entry = {
-        "time": datetime.datetime.now().strftime("%H:%M:%S"),
-        "subject_type": subject_type,
-        "error": str(error)[:300],
-    }
-    st.session_state["groq_error_log"].append(entry)
-    # giữ tối đa 50 lỗi gần nhất để không phình session_state
-    st.session_state["groq_error_log"] = st.session_state["groq_error_log"][-50:]
 
 # ==========================================
-# CHUẨN HÓA METADATA AI (category / tags / sentiment / importance)
-# ==========================================
-DEFAULT_CATEGORY = "Other"
-DEFAULT_SENTIMENT = "Neutral"
-DEFAULT_IMPORTANCE = 5
-MAX_TAGS = 5
-
-VALID_CATEGORIES = {
-    "AI", "Startup", "Finance", "Stock", "Crypto", "Cloud",
-    "Cybersecurity", "Science", "Healthcare", "Semiconductor",
-    "Robotics", "Energy", "Space", "Gaming", "Education",
-    "Government", "Biotech", "Other",
-}
-VALID_SENTIMENTS = {"Positive", "Neutral", "Negative"}
-
-# ==========================================
-# QUẢN LÝ NGUỒN RSS (đọc/ghi qua Supabase, không dùng links.txt nữa)
+# QUẢN LÝ NGUỒN RSS (CRUD qua Supabase — không liên quan tới việc cào dữ liệu)
 # ==========================================
 def get_active_rss_sources():
     try:
@@ -152,14 +98,11 @@ def get_active_rss_sources():
 
 
 def get_rss_info(url: str):
-    """Trả về (name, article_count). Nếu RSS lỗi: (None, 0)"""
     try:
         feed = feedparser.parse(url)
         if feed.bozo:
             return None, 0
-        name = feed.feed.get("title", url)
-        article_count = len(feed.entries)
-        return name, article_count
+        return feed.feed.get("title", url), len(feed.entries)
     except Exception:
         return None, 0
 
@@ -192,369 +135,70 @@ def delete_rss_source(source_id):
 def check_rss_status(url):
     try:
         feed = feedparser.parse(url)
-        if len(feed.entries) > 0:
-            return True
-        return False
+        return len(feed.entries) > 0
     except Exception:
         return False
 
 
-# ==========================================
-# PHÂN TÍCH AI DÙNG CHUNG (Groq) - trả về JSON có cấu trúc
-# ==========================================
-def _normalize_metadata(data: dict) -> dict:
-    """
-    Chuẩn hóa 4 trường metadata mới (category/tags/sentiment/importance).
-    Luôn trả về giá trị hợp lệ, không bao giờ để None hoặc sai kiểu lọt xuống DB.
-    """
-    category = data.get("category")
-    if not isinstance(category, str) or category not in VALID_CATEGORIES:
-        category = DEFAULT_CATEGORY
-    data["category"] = category
-
-    tags = data.get("tags")
-    if not isinstance(tags, list):
-        tags = []
-    tags = [str(t).strip() for t in tags if str(t).strip()]
-    data["tags"] = tags[:MAX_TAGS]
-
-    sentiment = data.get("sentiment")
-    if not isinstance(sentiment, str) or sentiment not in VALID_SENTIMENTS:
-        sentiment = DEFAULT_SENTIMENT
-    data["sentiment"] = sentiment
-
-    try:
-        importance = int(data.get("importance"))
-    except (TypeError, ValueError):
-        importance = DEFAULT_IMPORTANCE
-    data["importance"] = max(1, min(10, importance))
-
-    return data
-
-
-def _parse_ai_json(raw_response: str):
-    """Chuẩn hóa phản hồi của Groq thành dict đầy đủ metadata, luôn có default an toàn."""
-    if not raw_response:
-        return None
-
-    text = raw_response.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-
-    try:
-        data = json.loads(text)
-        if isinstance(data.get("diem_noi_bat"), str):
-            data["diem_noi_bat"] = [data["diem_noi_bat"]]
-        data.setdefault("tom_tat", "")
-        data.setdefault("anh_huong_thi_truong", "")
-        data.setdefault("diem_noi_bat", [])
-        return _normalize_metadata(data)
-    except Exception:
-        # Nếu model trả về không đúng JSON, vẫn lưu lại nội dung thô vào tom_tat
-        # và áp dụng default cho toàn bộ metadata để tránh lỗi ở bước lưu DB.
-        return _normalize_metadata({
-            "tom_tat": text[:600],
-            "anh_huong_thi_truong": "",
-            "diem_noi_bat": [],
-        })
-
-
-def _analyze_with_groq(raw_text: str, subject_type: str):
-    """subject_type: 'news' hoặc 'github' — quyết định prompt phân tích phù hợp."""
-    if not raw_text or len(raw_text.strip()) < 30:
-        return None
-
-    if subject_type == "news":
-        categories_str = ", ".join(sorted(VALID_CATEGORIES))
-        system_prompt = (
-            "Bạn là chuyên gia phân tích tin tức tài chính/công nghệ. "
-            "Đọc nội dung bài báo được cung cấp và trả lời DUY NHẤT bằng JSON hợp lệ, "
-            "không thêm chữ nào khác ngoài JSON, theo đúng format:\n"
-            '{"tom_tat": "tóm tắt nội dung chính trong 2-4 câu", '
-            '"anh_huong_thi_truong": "phân tích tác động có thể có đến thị trường/ngành liên quan trong 1-3 câu — '
-            "nếu không có tác động rõ ràng thì ghi 'Không có tác động thị trường rõ ràng'\", "
-            '"diem_noi_bat": ["điểm/số liệu nổi bật 1", "điểm nổi bật 2", "điểm nổi bật 3"], '
-            f'"category": "CHỌN DUY NHẤT một giá trị trong danh sách sau (viết đúng chính tả, đúng hoa/thường): {categories_str}", '
-            '"tags": ["tối đa 5 từ khóa liên quan, ví dụ tên công ty/công nghệ/sản phẩm/quốc gia"], '
-            '"sentiment": "CHỌN DUY NHẤT một trong: Positive, Neutral, Negative", '
-            '"importance": "một SỐ NGUYÊN từ 1 đến 10 thể hiện mức độ quan trọng của bài viết đối với thị trường/ngành"}'
-        )
-    else:
-        system_prompt = (
-            "Bạn là chuyên gia phân tích công nghệ và mã nguồn mở. "
-            "Đọc thông tin về dự án GitHub được cung cấp và trả lời DUY NHẤT bằng JSON hợp lệ, "
-            "không thêm chữ nào khác ngoài JSON, theo đúng format:\n"
-            '{"tom_tat": "dự án này làm gì, giải quyết vấn đề gì, dùng công nghệ/ngôn ngữ chính nào trong 2-4 câu", '
-            '"anh_huong_thi_truong": "vì sao dự án đang trending, tác động tiềm năng đến ngành/cộng đồng công nghệ '
-            'liên quan trong 1-3 câu", '
-            '"diem_noi_bat": ["tính năng/điểm nổi bật 1", "điểm nổi bật 2", "điểm nổi bật 3"]}'
-        )
-
-    last_error = None
-    for attempt in range(GROQ_MAX_RETRIES):
-        _groq_rate_limiter.wait()
+def get_last_sync_time():
+    """Doc thoi diem ban ghi moi nhat trong DB - phan anh dung lan cao gan nhat
+    (du la do GitHub Actions cron hay do ban bam nut Chay ngay)."""
+    latest = None
+    for table in ("news", "github_trending"):
         try:
-            completion = groq_client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": raw_text[:6000]},
-                ],
-                temperature=0.3,
-                max_tokens=500,
-            )
-            return _parse_ai_json(completion.choices[0].message.content)
-        except Exception as e:
-            last_error = e
-            error_text = str(e).lower()
-            # 429 / rate_limit / too many requests -> co the thu lai sau khi cho
-            is_retryable = (
-                "429" in error_text
-                or "rate" in error_text
-                or "timeout" in error_text
-                or "timed out" in error_text
-                or "connection" in error_text
-            )
-            if is_retryable and attempt < GROQ_MAX_RETRIES - 1:
-                wait_s = (2 ** attempt) + random.uniform(0, 1)
-                time.sleep(wait_s)
-                continue
-            break
-
-    # het luot retry (hoac loi khong retryable) -> ghi log de xem tren UI, tra ve None
-    if last_error is not None:
-        _log_groq_error(subject_type, last_error)
-    return None
-
-
-# ==========================================
-# CÀO & PHÂN TÍCH BÀI BÁO (SONG SONG)
-# ==========================================
-def _parse_one_feed(link: str):
-    """Cào và parse 1 link RSS (chạy trong 1 thread). Không ghi DB ở đây."""
-    link = link.strip()
-    if not link:
-        return []
-
-    articles = []
-    try:
-        feed = feedparser.parse(link)
-        for entry in feed.entries[:10]:
-            articles.append({
-                "title": entry.title if "title" in entry else "No Title",
-                "link": entry.link if "link" in entry else "",
-                "published_date": entry.published if "published" in entry else datetime.datetime.now().isoformat(),
-                "source": link,
-                "is_active": True,
-                "_rss_fallback_text": entry.get("summary", entry.get("description", "")),
-            })
-    except Exception:
-        pass
-    return articles
-
-
-def _fetch_full_article_text(url: str) -> str:
-    try:
-        resp = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(resp.text, "html.parser")
-        paragraphs = soup.find_all("p")
-        text = " ".join(p.get_text(strip=True) for p in paragraphs)
-        return text[:6000]
-    except Exception:
-        return ""
-
-
-def _build_news_analysis(article: dict):
-    full_text = _fetch_full_article_text(article["link"]) if article["link"] else ""
-    if len(full_text.strip()) < 50:
-        full_text = BeautifulSoup(article.get("_rss_fallback_text", ""), "html.parser").get_text()
-    combined = f"Tiêu đề: {article['title']}\n\nNội dung: {full_text}"
-    return _analyze_with_groq(combined, "news")
-
-
-def _apply_news_metadata(article: dict, analysis: dict | None):
-    """
-    Gắn ai_analysis + 4 cột metadata riêng (category/tags/sentiment/importance) vào article,
-    để lưu trực tiếp vào bảng `news`. Luôn có default nếu AI không phân tích được.
-    """
-    article["ai_analysis"] = analysis
-    if analysis:
-        article["category"] = analysis.get("category", DEFAULT_CATEGORY)
-        article["tags"] = analysis.get("tags", [])
-        article["sentiment"] = analysis.get("sentiment", DEFAULT_SENTIMENT)
-        article["importance"] = analysis.get("importance", DEFAULT_IMPORTANCE)
-    else:
-        article["category"] = DEFAULT_CATEGORY
-        article["tags"] = []
-        article["sentiment"] = DEFAULT_SENTIMENT
-        article["importance"] = DEFAULT_IMPORTANCE
-    return article
-
-
-def fetch_and_save_news(links):
-    """
-    1) Cào + parse tất cả link RSS song song.
-    2) Loại bỏ bài đã có sẵn trong DB (tránh phân tích lại bài cũ).
-    3) Phân tích AI (Groq) song song CHỈ cho bài thật sự mới -> sinh summary + metadata.
-    4) Ghi 1 lần bằng upsert hàng loạt (bao gồm cả cột category/tags/sentiment/importance).
-    """
-    all_articles = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(_parse_one_feed, link) for link in links]
-        for future in as_completed(futures):
-            try:
-                all_articles.extend(future.result())
-            except Exception:
-                pass
-
-    if not all_articles:
-        return 0
-
-    seen = set()
-    deduped = []
-    for a in all_articles:
-        if a["link"] and a["link"] not in seen:
-            seen.add(a["link"])
-            deduped.append(a)
-
-    all_links = [a["link"] for a in deduped if a["link"]]
-    existing_links = set()
-    try:
-        for i in range(0, len(all_links), 200):
-            chunk = all_links[i:i + 200]
-            res = supabase.table("news").select("link").in_("link", chunk).execute()
-            existing_links.update(row["link"] for row in res.data)
-    except Exception:
-        pass
-
-    new_articles = [a for a in deduped if a["link"] not in existing_links]
-
-    if new_articles:
-        with ThreadPoolExecutor(max_workers=ANALYSIS_WORKERS) as executor:
-            future_to_article = {executor.submit(_build_news_analysis, a): a for a in new_articles}
-            for future in as_completed(future_to_article):
-                article = future_to_article[future]
-                try:
-                    analysis = future.result()
-                except Exception:
-                    analysis = None
-                _apply_news_metadata(article, analysis)
-
-    payload = [
-        {k: v for k, v in a.items() if k != "_rss_fallback_text"}
-        for a in new_articles
-    ]
-
-    if payload:
-        try:
-            supabase.table("news").upsert(payload, on_conflict="link").execute()
+            res = supabase.table(table).select("created_at").order("created_at", desc=True).limit(1).execute()
+            if res.data:
+                ts = datetime.datetime.fromisoformat(res.data[0]["created_at"].replace("Z", "+00:00"))
+                if latest is None or ts > latest:
+                    latest = ts
         except Exception:
             pass
-
-    return len(payload)
+    return latest
 
 
 # ==========================================
-# CÀO & PHÂN TÍCH DỰ ÁN GITHUB TRENDING (SONG SONG)
+# HIỂN THỊ PHÂN TÍCH AI (tóm tắt + chi tiết + tác động + metadata)
 # ==========================================
-def scrape_trending_page(period: str, today_str: str):
-    """Cào 1 trang GitHub Trending theo chu kỳ (daily/weekly/monthly) - không phân tích AI ở đây."""
-    repos = []
-    try:
-        url = f"https://github.com/trending?since={period}"
-        response = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(response.text, "html.parser")
-        rows = soup.find_all("article", class_="Box-row")
+def render_ai_analysis_block(analysis: dict):
+    if not analysis:
+        st.caption("Chưa có phân tích AI cho mục này (có thể do lỗi khi phân tích hoặc nội dung quá ngắn).")
+        return
 
-        for repo in rows[:10]:
-            h2 = repo.find("h2", class_="h3 lh-condensed")
-            a_tag = h2.find("a") if h2 else None
-            repo_name = a_tag.text.strip().replace("\n", "").replace(" ", "") if a_tag else "Unknown"
-            repo_link = "https://github.com" + a_tag["href"] if a_tag else ""
+    summary = analysis.get("tom_tat")
+    if summary:
+        st.write(summary)
 
-            p_tag = repo.find("p", class_="col-9 color-fg-muted my-1 pr-4")
-            description = p_tag.text.strip() if p_tag else "Không có mô tả"
+    detail = analysis.get("phan_tich_chi_tiet")
+    if detail:
+        with st.expander("📖 Xem phân tích chi tiết"):
+            st.markdown(f'<div class="detail-box">{detail}</div>', unsafe_allow_html=True)
 
-            repos.append({
-                "repo_name": repo_name,
-                "repo_link": repo_link,
-                "description": description,
-                "period": period,
-                "fetched_date": today_str,
-            })
-    except Exception:
-        pass
-    return repos
+    impact = analysis.get("anh_huong_thi_truong")
+    if impact:
+        st.markdown(f'<div class="impact-box">🌍 <b>Ảnh hưởng:</b> {impact}</div>', unsafe_allow_html=True)
 
+    related = analysis.get("doi_tuong_lien_quan") or []
+    if related:
+        st.markdown("**🎯 Đối tượng liên quan:** " + ", ".join(related))
 
-def _fetch_repo_readme_text(url: str) -> str:
-    try:
-        resp = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(resp.text, "html.parser")
-        readme = soup.find(id="readme") or soup.find("article")
-        if readme:
-            return readme.get_text(" ", strip=True)[:5000]
-    except Exception:
-        pass
-    return ""
+    points = analysis.get("diem_noi_bat") or []
+    if points:
+        st.markdown("**✨ Điểm nổi bật:**")
+        for p in points:
+            st.markdown(f"- {p}")
 
 
-def _build_repo_analysis(repo: dict):
-    readme_text = _fetch_repo_readme_text(repo["repo_link"]) if repo["repo_link"] else ""
-    combined = f"Tên dự án: {repo['repo_name']}\nMô tả ngắn: {repo['description']}\n\nNội dung README: {readme_text}"
-    return _analyze_with_groq(combined, "github")
+def render_metadata_badges(item: dict):
+    category = item.get("category") or core.DEFAULT_CATEGORY
+    sentiment = item.get("sentiment") or core.DEFAULT_SENTIMENT
+    importance = item.get("importance", core.DEFAULT_IMPORTANCE)
+    tags = item.get("tags") or []
 
-
-def fetch_and_save_github():
-    """
-    1) Cào 3 trang trending (daily/weekly/monthly).
-    2) Loại bỏ repo đã có trong DB cho ngày hôm nay (tránh phân tích lại).
-    3) Phân tích AI song song CHỈ cho repo thật sự mới.
-    4) Ghi 1 lần bằng upsert hàng loạt.
-    """
-    today_str = datetime.date.today().isoformat()
-    raw_repos = []
-    for period in ["daily", "weekly", "monthly"]:
-        raw_repos.extend(scrape_trending_page(period, today_str))
-
-    if not raw_repos:
-        return 0
-
-    seen = set()
-    deduped = []
-    for r in raw_repos:
-        key = (r["repo_link"], r["period"])
-        if r["repo_link"] and key not in seen:
-            seen.add(key)
-            deduped.append(r)
-
-    existing_keys = set()
-    try:
-        res = supabase.table("github_trending").select("repo_link, period").eq("fetched_date", today_str).execute()
-        existing_keys = {(row["repo_link"], row["period"]) for row in res.data}
-    except Exception:
-        pass
-
-    new_repos = [r for r in deduped if (r["repo_link"], r["period"]) not in existing_keys]
-
-    if new_repos:
-        with ThreadPoolExecutor(max_workers=ANALYSIS_WORKERS) as executor:
-            future_to_repo = {executor.submit(_build_repo_analysis, r): r for r in new_repos}
-            for future in as_completed(future_to_repo):
-                repo = future_to_repo[future]
-                try:
-                    repo["ai_analysis"] = future.result()
-                except Exception:
-                    repo["ai_analysis"] = None
-
-        try:
-            supabase.table("github_trending").upsert(new_repos, on_conflict="repo_link, period, fetched_date").execute()
-        except Exception:
-            pass
-
-    return len(new_repos)
+    sentiment_icon = {"Positive": "🟢", "Neutral": "⚪", "Negative": "🔴"}.get(sentiment, "⚪")
+    line = f"`{category}`&nbsp;&nbsp;·&nbsp;&nbsp;{sentiment_icon} {sentiment}&nbsp;&nbsp;·&nbsp;&nbsp;⭐ {importance}/10"
+    if tags:
+        line += "&nbsp;&nbsp;·&nbsp;&nbsp;🏷️ " + ", ".join(tags)
+    st.markdown(f'<div style="font-size:13px; color:#999; margin-bottom:6px;">{line}</div>', unsafe_allow_html=True)
 
 
 def render_clickable_trend_chart(df: pd.DataFrame):
@@ -573,32 +217,19 @@ def render_clickable_trend_chart(df: pd.DataFrame):
         var links = {links};
         var hovertext = {hover};
         var data = [{{
-            type: 'bar',
-            orientation: 'h',
-            x: values,
-            y: labels,
-            text: labels,
-            textposition: 'auto',
-            hovertext: hovertext,
-            hoverinfo: 'text',
-            marker: {{
-                color: values,
-                colorscale: [[0, '#6C63FF'], [1, '#00D4FF']],
-                line: {{ width: 0 }}
-            }}
+            type: 'bar', orientation: 'h', x: values, y: labels, text: labels,
+            textposition: 'auto', hovertext: hovertext, hoverinfo: 'text',
+            marker: {{ color: values, colorscale: [[0, '#6C63FF'], [1, '#00D4FF']], line: {{ width: 0 }} }}
         }}];
         var layout = {{
             margin: {{ l: 10, r: 20, t: 10, b: 30 }},
             yaxis: {{ autorange: 'reversed', automargin: true, showgrid: false }},
             xaxis: {{ showgrid: false, zeroline: false, title: 'Trend Score' }},
-            plot_bgcolor: 'rgba(0,0,0,0)',
-            paper_bgcolor: 'rgba(0,0,0,0)',
-            font: {{ color: '#EAEAEA' }}
+            plot_bgcolor: 'rgba(0,0,0,0)', paper_bgcolor: 'rgba(0,0,0,0)', font: {{ color: '#EAEAEA' }}
         }};
         Plotly.newPlot('trend-chart', data, layout, {{ displayModeBar: false, responsive: true }});
         document.getElementById('trend-chart').on('plotly_click', function(evt) {{
-            var idx = evt.points[0].pointIndex;
-            window.open(links[idx], '_blank');
+            window.open(links[evt.points[0].pointIndex], '_blank');
         }});
     </script>
     <p style="color:#888; font-size:12px; margin-top:4px;">💡 Nhấp vào một cột để mở repo trong tab mới.</p>
@@ -606,55 +237,78 @@ def render_clickable_trend_chart(df: pd.DataFrame):
     st.components.v1.html(html_code, height=470)
 
 
-def render_ai_analysis_block(analysis: dict):
-    """Hiển thị tóm tắt + ảnh hưởng thị trường + điểm nổi bật cho cả bài báo lẫn dự án github."""
-    if not analysis:
-        st.caption("Chưa có phân tích AI cho mục này (có thể do lỗi khi phân tích hoặc nội dung quá ngắn).")
+def render_tag_mindmap(data: list, container_key: str):
+    """
+    Mind map dang bubble network: moi bubble la 1 tag, noi voi nhau neu 2 tag
+    cung xuat hien trong 1 bai bao (co-occurrence). Kich thuoc bubble = tan suat
+    xuat hien. Dung vis-network.js (CDN) qua HTML component - khong can them
+    dependency Python nao.
+    """
+    from collections import Counter
+    from itertools import combinations
+
+    tag_counts = Counter()
+    edge_counts = Counter()
+    for item in data:
+        tags = list(dict.fromkeys(item.get("tags") or []))  # bo trung trong cung 1 bai
+        for t in tags:
+            tag_counts[t] += 1
+        for a, b in combinations(sorted(tags), 2):
+            edge_counts[(a, b)] += 1
+
+    if len(tag_counts) < 2:
+        st.caption("Chưa đủ dữ liệu tags để vẽ mind map (cần ít nhất vài bài đã được phân tích AI).")
         return
 
-    summary = analysis.get("tom_tat")
-    if summary:
-        st.write(summary)
+    top_tags = [t for t, _ in tag_counts.most_common(30)]
+    top_tags_set = set(top_tags)
 
-    impact = analysis.get("anh_huong_thi_truong")
-    if impact:
-        st.markdown(f'<div class="impact-box">🌍 <b>Ảnh hưởng:</b> {impact}</div>', unsafe_allow_html=True)
+    nodes = [
+        {"id": t, "label": t, "value": tag_counts[t]}
+        for t in top_tags
+    ]
+    edges = [
+        {"from": a, "to": b, "value": c}
+        for (a, b), c in edge_counts.items()
+        if a in top_tags_set and b in top_tags_set and c > 0
+    ]
 
-    points = analysis.get("diem_noi_bat") or []
-    if points:
-        st.markdown("**✨ Điểm nổi bật:**")
-        for p in points:
-            st.markdown(f"- {p}")
-
-
-def render_metadata_badges(item: dict):
+    html_code = f"""
+    <div id="mindmap" style="width:100%;height:520px;background:transparent;"></div>
+    <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+    <script>
+        var nodes = new vis.DataSet({json.dumps(nodes)});
+        var edges = new vis.DataSet({json.dumps(edges)});
+        var container = document.getElementById('mindmap');
+        var data = {{ nodes: nodes, edges: edges }};
+        var options = {{
+            nodes: {{
+                shape: 'dot',
+                scaling: {{ min: 12, max: 45 }},
+                font: {{ color: '#EAEAEA', size: 14 }},
+                color: {{ background: '#6C63FF', border: '#00D4FF', highlight: {{ background: '#00D4FF' }} }}
+            }},
+            edges: {{
+                color: {{ color: 'rgba(140,140,170,0.35)', highlight: '#00D4FF' }},
+                smooth: {{ type: 'continuous' }}
+            }},
+            physics: {{
+                stabilization: true,
+                barnesHut: {{ gravitationalConstant: -3000, springLength: 110, springConstant: 0.03 }}
+            }},
+            interaction: {{ hover: true, tooltipDelay: 100 }}
+        }};
+        new vis.Network(container, data, options);
+    </script>
     """
-    Hiển thị nhanh 4 metadata đã được lưu trực tiếp vào bảng news
-    (category / sentiment / importance / tags) — giúp kiểm chứng pipeline hoạt động đúng.
-    """
-    category = item.get("category") or DEFAULT_CATEGORY
-    sentiment = item.get("sentiment") or DEFAULT_SENTIMENT
-    importance = item.get("importance", DEFAULT_IMPORTANCE)
-    tags = item.get("tags") or []
-
-    sentiment_icon = {"Positive": "🟢", "Neutral": "⚪", "Negative": "🔴"}.get(sentiment, "⚪")
-
-    line = f"`{category}`&nbsp;&nbsp;·&nbsp;&nbsp;{sentiment_icon} {sentiment}&nbsp;&nbsp;·&nbsp;&nbsp;⭐ {importance}/10"
-    if tags:
-        line += "&nbsp;&nbsp;·&nbsp;&nbsp;🏷️ " + ", ".join(tags)
-    st.markdown(f'<div style="font-size:13px; color:#999; margin-bottom:6px;">{line}</div>', unsafe_allow_html=True)
+    st.components.v1.html(html_code, height=530)
 
 
 def render_time_filter(prefix: str):
-    """
-    Bộ lọc thời gian ĐỘC LẬP cho từng tab (tin tức / github).
-    prefix dùng để widget key không bị trùng giữa 2 tab.
-    """
     filter_mode = st.radio(
         "🔍 Chế độ lọc thời gian:",
         ["📅 Theo ngày cụ thể (Lịch)", "📊 Tổng hợp (Tuần/Tháng)"],
-        key=f"{prefix}_filter_mode",
-        horizontal=True,
+        key=f"{prefix}_filter_mode", horizontal=True,
     )
     now = datetime.datetime.now()
 
@@ -663,25 +317,18 @@ def render_time_filter(prefix: str):
         start_time = datetime.datetime.combine(selected_date, datetime.time.min).isoformat()
         end_time = datetime.datetime.combine(selected_date, datetime.time.max).isoformat()
         display_title = f"Ngày {selected_date.strftime('%d/%m/%Y')}"
-        return {
-            "mode": "date", "start": start_time, "end": end_time,
-            "title": display_title, "selected_date": selected_date, "now": now,
-        }
+        return {"mode": "date", "start": start_time, "end": end_time,
+                "title": display_title, "selected_date": selected_date, "now": now}
     else:
         time_period = st.selectbox("Chọn chu kỳ:", ["Tuần này", "Tháng này"], key=f"{prefix}_period")
-        if time_period == "Tuần này":
-            start_time = (now - datetime.timedelta(days=7)).isoformat()
-        else:
-            start_time = (now - datetime.timedelta(days=30)).isoformat()
+        start_time = (now - datetime.timedelta(days=7 if time_period == "Tuần này" else 30)).isoformat()
         end_time = now.isoformat()
-        return {
-            "mode": "period", "start": start_time, "end": end_time,
-            "title": time_period, "time_period": time_period, "now": now,
-        }
+        return {"mode": "period", "start": start_time, "end": end_time,
+                "title": time_period, "time_period": time_period, "now": now}
 
 
 # ==========================================
-# [MỚI] SEARCH + SMART FILTER + DASHBOARD THỐNG KÊ (chỉ xử lý client-side, không đổi DB/crawler)
+# SEARCH + SMART FILTER + DASHBOARD THỐNG KÊ
 # ==========================================
 def _get_news_summary_text(item: dict) -> str:
     analysis = item.get("ai_analysis") or {}
@@ -694,19 +341,14 @@ def _get_news_summary_text(item: dict) -> str:
 
 
 def render_news_search_and_filter_controls(prefix: str, data: list):
-    """
-    Vẽ ô search + các bộ lọc smart filter cho tab tin tức.
-    Trả về dict các điều kiện lọc để áp dụng lên data.
-    """
-    all_categories = sorted({d.get("category") or DEFAULT_CATEGORY for d in data})
-    all_sentiments = sorted({d.get("sentiment") or DEFAULT_SENTIMENT for d in data})
+    all_categories = sorted({d.get("category") or core.DEFAULT_CATEGORY for d in data})
+    all_sentiments = sorted({d.get("sentiment") or core.DEFAULT_SENTIMENT for d in data})
     all_sources = sorted({d.get("source") or "" for d in data if d.get("source")})
     all_tags = sorted({t for d in data for t in (d.get("tags") or [])})
 
     search_query = st.text_input(
         "🔎 Tìm kiếm (tiêu đề / tóm tắt / tags / category / nguồn)",
-        key=f"{prefix}_search",
-        placeholder="VD: Nvidia, lãi suất, AI chip...",
+        key=f"{prefix}_search", placeholder="VD: Nvidia, lãi suất, AI chip...",
     )
 
     with st.expander("⚙️ Smart Filter", expanded=False):
@@ -716,85 +358,61 @@ def render_news_search_and_filter_controls(prefix: str, data: list):
             f_sentiment = st.multiselect("Sentiment", all_sentiments, key=f"{prefix}_f_sentiment")
             f_tags = st.multiselect("Tags", all_tags, key=f"{prefix}_f_tags")
         with c2:
-            f_source = st.multiselect(
-                "Nguồn (source)",
-                all_sources,
-                key=f"{prefix}_f_source",
-                format_func=lambda u: u[:45] + "..." if len(u) > 45 else u,
-            )
+            f_source = st.multiselect("Nguồn (source)", all_sources, key=f"{prefix}_f_source",
+                                       format_func=lambda u: u[:45] + "..." if len(u) > 45 else u)
             f_importance = st.slider("Importance", 1, 10, (1, 10), key=f"{prefix}_f_importance")
 
     return {
-        "search": search_query.strip().lower(),
-        "category": f_category,
-        "sentiment": f_sentiment,
-        "tags": f_tags,
-        "source": f_source,
-        "importance_range": f_importance,
+        "search": search_query.strip().lower(), "category": f_category, "sentiment": f_sentiment,
+        "tags": f_tags, "source": f_source, "importance_range": f_importance,
     }
 
 
 def apply_news_filters(data: list, filters: dict) -> list:
     result = []
     for item in data:
-        if filters["category"] and (item.get("category") or DEFAULT_CATEGORY) not in filters["category"]:
+        if filters["category"] and (item.get("category") or core.DEFAULT_CATEGORY) not in filters["category"]:
             continue
-        if filters["sentiment"] and (item.get("sentiment") or DEFAULT_SENTIMENT) not in filters["sentiment"]:
+        if filters["sentiment"] and (item.get("sentiment") or core.DEFAULT_SENTIMENT) not in filters["sentiment"]:
             continue
         if filters["source"] and (item.get("source") or "") not in filters["source"]:
             continue
-
         item_tags = item.get("tags") or []
         if filters["tags"] and not set(filters["tags"]).intersection(item_tags):
             continue
-
-        importance = item.get("importance", DEFAULT_IMPORTANCE) or DEFAULT_IMPORTANCE
+        importance = item.get("importance", core.DEFAULT_IMPORTANCE) or core.DEFAULT_IMPORTANCE
         lo, hi = filters["importance_range"]
         if not (lo <= importance <= hi):
             continue
-
         if filters["search"]:
             haystack = " ".join([
-                item.get("title", ""),
-                _get_news_summary_text(item),
-                item.get("category", ""),
-                item.get("source", ""),
-                " ".join(item_tags),
+                item.get("title", ""), _get_news_summary_text(item),
+                item.get("category", ""), item.get("source", ""), " ".join(item_tags),
             ]).lower()
             if filters["search"] not in haystack:
                 continue
-
         result.append(item)
     return result
 
 
 def render_news_dashboard_stats(data: list):
-    """Dashboard thống kê: Category / Sentiment / Importance / Top Tags / Top Sources / Daily count."""
     if not data:
         return
-
     df = pd.DataFrame(data)
 
     with st.expander("📊 Thống kê tổng quan", expanded=False):
         col1, col2, col3 = st.columns(3)
-
         with col1:
             st.markdown("**📂 Category Distribution**")
-            cat_counts = df["category"].fillna(DEFAULT_CATEGORY).value_counts()
-            st.bar_chart(cat_counts)
-
+            st.bar_chart(df["category"].fillna(core.DEFAULT_CATEGORY).value_counts())
         with col2:
             st.markdown("**😊 Sentiment Distribution**")
-            sent_counts = df["sentiment"].fillna(DEFAULT_SENTIMENT).value_counts()
-            st.bar_chart(sent_counts)
-
+            st.bar_chart(df["sentiment"].fillna(core.DEFAULT_SENTIMENT).value_counts())
         with col3:
             st.markdown("**⭐ Importance Distribution**")
-            imp_counts = df["importance"].fillna(DEFAULT_IMPORTANCE).astype(int).value_counts().sort_index()
-            st.bar_chart(imp_counts)
+            st.bar_chart(df["importance"].fillna(core.DEFAULT_IMPORTANCE).astype(int).value_counts().sort_index())
 
         col4, col5 = st.columns(2)
-
         with col4:
             st.markdown("**🏷️ Top Tags**")
             tag_series = df["tags"].dropna().explode()
@@ -803,7 +421,6 @@ def render_news_dashboard_stats(data: list):
                 st.bar_chart(tag_series.value_counts().head(10))
             else:
                 st.caption("Chưa có tags.")
-
         with col5:
             st.markdown("**📡 Top Sources**")
             src_counts = df["source"].fillna("Unknown").value_counts().head(10)
@@ -813,146 +430,117 @@ def render_news_dashboard_stats(data: list):
         if "created_at" in df.columns:
             st.markdown("**📅 Số bài viết theo ngày**")
             dates = pd.to_datetime(df["created_at"], errors="coerce").dt.date
-            daily_counts = dates.value_counts().sort_index()
-            st.bar_chart(daily_counts)
+            st.bar_chart(dates.value_counts().sort_index())
+
+        st.markdown("**🕸️ Mind Map — mối liên kết giữa các chủ đề/tags**")
+        st.caption("Bubble càng lớn = tag xuất hiện càng nhiều. Đường nối = 2 tag cùng xuất hiện trong 1 bài báo.")
+        render_tag_mindmap(data, "news_mindmap")
 
 
 def render_github_search_control(prefix: str):
-    return st.text_input(
-        "🔎 Tìm kiếm dự án (tên repo / mô tả)",
-        key=f"{prefix}_search",
-        placeholder="VD: llm, agent, rust...",
-    ).strip().lower()
+    return st.text_input("🔎 Tìm kiếm dự án (tên repo / mô tả)", key=f"{prefix}_search",
+                          placeholder="VD: llm, agent, rust...").strip().lower()
 
 
 def apply_github_search(data: list, query: str) -> list:
     if not query:
         return data
-    result = []
-    for item in data:
-        haystack = f"{item.get('repo_name', '')} {item.get('description', '')}".lower()
-        if query in haystack:
-            result.append(item)
-    return result
+    return [d for d in data if query in f"{d.get('repo_name', '')} {d.get('description', '')}".lower()]
 
 
 # ==========================================
 # 1. HIỂN THỊ GIAO DIỆN NGAY LẬP TỨC (UI FIRST)
 # ==========================================
 
-# --- SIDEBAR: Quản lý RSS + trạng thái đồng bộ ---
 with st.sidebar:
     st.header("⚙️ Bảng Điều Khiển")
 
     with st.expander("🔗 Quản lý nguồn RSS", expanded=True):
-
         tab_add, tab_import = st.tabs(["➕ Thêm 1 link", "📥 Quick Import"])
 
-        # ======================
-        # THÊM 1 LINK
-        # ======================
         with tab_add:
-            new_link = st.text_input(
-                "Link RSS",
-                placeholder="https://vnexpress.net/rss/..."
-            )
-
+            new_link = st.text_input("Link RSS", placeholder="https://vnexpress.net/rss/...")
             if st.button("➕ Thêm nguồn", use_container_width=True):
                 ok, msg = add_rss_source(new_link)
+                (st.success if ok else st.error)(msg)
                 if ok:
-                    st.success(msg)
                     st.rerun()
-                else:
-                    st.error(msg)
 
-        # ======================
-        # QUICK IMPORT
-        # ======================
         with tab_import:
             rss_text = st.text_area(
-                "Dán nhiều link (mỗi dòng một link)",
-                height=180,
-                placeholder=(
-                    "https://vnexpress.net/rss/kinh-doanh.rss\n"
-                    "https://vnexpress.net/rss/the-gioi.rss\n"
-                    "https://techcrunch.com/feed"
-                ),
+                "Dán nhiều link (mỗi dòng một link)", height=180,
+                placeholder="https://vnexpress.net/rss/kinh-doanh.rss\nhttps://vnexpress.net/rss/the-gioi.rss\nhttps://techcrunch.com/feed",
             )
-
             if st.button("🚀 Import tất cả", use_container_width=True):
-                imported = 0
-                duplicated = 0
-                invalid = 0
-
-                urls = [u.strip() for u in rss_text.splitlines() if u.strip()]
-
-                for url in urls:
+                imported = duplicated = invalid = 0
+                for url in [u.strip() for u in rss_text.splitlines() if u.strip()]:
                     if not url.startswith(("http://", "https://")):
                         invalid += 1
                         continue
-
                     ok, _ = add_rss_source(url)
-                    if ok:
-                        imported += 1
-                    else:
-                        duplicated += 1
-
-                st.success(
-                    f"✅ Imported: {imported}\n\n"
-                    f"🔁 Duplicate: {duplicated}\n\n"
-                    f"❌ Invalid: {invalid}"
-                )
+                    imported += ok
+                    duplicated += (not ok)
+                st.success(f"✅ Imported: {imported}\n\n🔁 Duplicate: {duplicated}\n\n❌ Invalid: {invalid}")
                 st.rerun()
 
         st.divider()
-
-        # ======================
-        # DANH SÁCH RSS
-        # ======================
         sources = get_active_rss_sources()
-
         st.caption(f"📡 Đang theo dõi **{len(sources)}** nguồn RSS")
-
-        if len(sources) == 0:
+        if not sources:
             st.info("Chưa có nguồn RSS nào.")
         else:
             for src in sources:
                 c1, c2, c3 = st.columns([5, 1, 1])
-
                 with c1:
                     display = src["url"]
-                    if len(display) > 45:
-                        display = display[:42] + "..."
-                    st.text(display)
-
+                    st.text(display[:42] + "..." if len(display) > 45 else display)
                 with c2:
                     if st.button("🔍", key=f"check_{src['id']}"):
-                        ok = check_rss_status(src["url"])
-                        if ok:
-                            st.success("RSS hoạt động")
-                        else:
-                            st.error("RSS lỗi hoặc không còn tồn tại")
-
+                        is_ok = check_rss_status(src["url"])
+                        (st.success if is_ok else st.error)(
+                            "RSS hoạt động" if is_ok else "RSS lỗi hoặc không còn tồn tại"
+                        )
                 with c3:
                     if st.button("🗑️", key=f"del_{src['id']}"):
                         delete_rss_source(src["id"])
                         st.rerun()
 
     st.divider()
+    st.caption(
+        "🕒 Dữ liệu được **GitHub Actions cào & phân tích tự động mỗi 20 phút**, "
+        "không phụ thuộc việc bạn có mở app hay không. Nút bên dưới chỉ để chạy thử/kiểm tra ngay."
+    )
+    manual_run = st.button("▶️ Chạy cào dữ liệu ngay (thủ công)", use_container_width=True)
 
-    force_refresh = st.button("🔄 Buộc chạy lại ngay (bỏ qua cache 15 phút)", use_container_width=True)
-
-    error_log = st.session_state.get("groq_error_log", [])
-    with st.expander(f"🐞 Lỗi phân tích AI gần đây ({len(error_log)})", expanded=False):
-        if not error_log:
-            st.caption("Chưa ghi nhận lỗi nào trong phiên này.")
-        else:
-            for entry in reversed(error_log[-15:]):
-                st.caption(f"[{entry['time']}] ({entry['subject_type']}) {entry['error']}")
-
-    st.divider()
+    last_sync = get_last_sync_time()
     status_placeholder = st.empty()
+    if last_sync:
+        status_placeholder.success(f"✅ Dữ liệu mới nhất trong DB: {last_sync.strftime('%H:%M:%S %d/%m/%Y')}")
+    else:
+        status_placeholder.info("Chưa có dữ liệu nào trong DB.")
 
+    manual_log = st.session_state.get("manual_run_log", [])
+    with st.expander(f"🐞 Log lần chạy thủ công gần nhất ({len(manual_log)})", expanded=False):
+        if not manual_log:
+            st.caption("Chưa chạy thủ công lần nào trong phiên này.")
+        else:
+            for entry in reversed(manual_log[-10:]):
+                st.caption(entry)
+
+if manual_run:
+    with st.spinner("Đang cào + phân tích ngay (có thể mất 1-2 phút tùy số lượng bài mới)..."):
+        try:
+            links = [s["url"] for s in get_active_rss_sources() if s.get("is_active", True)]
+            news_count = core.fetch_and_save_news(supabase, groq_client, links) if links else 0
+            git_count = core.fetch_and_save_github(supabase, groq_client)
+            st.session_state["manual_run_log"].append(
+                f"[{datetime.datetime.now().strftime('%H:%M:%S')}] OK — {news_count} bài mới, {git_count} repo mới."
+            )
+            st.success(f"✅ Xong! {news_count} bài báo mới, {git_count} dự án GitHub mới.")
+        except Exception as e:
+            st.session_state["manual_run_log"].append(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] LỖI: {e}")
+            st.error(f"🔴 Lỗi khi chạy: {e}")
+        st.session_state["manual_run_log"] = st.session_state["manual_run_log"][-30:]
 
 # --- TABS (mỗi tab có bộ lọc thời gian RIÊNG) ---
 tab1, tab2 = st.tabs(["📰 Tin tức & Báo chí", "🔥 Top 10 GitHub Trending"])
@@ -963,32 +551,25 @@ with tab1:
     st.subheader(f"Phân tích Báo chí ({news_filter['title']})")
 
     news_response = (
-        supabase.table("news")
-        .select("*")
-        .gte("created_at", news_filter["start"])
-        .lte("created_at", news_filter["end"])
-        .order("created_at", desc=True)
-        .execute()
+        supabase.table("news").select("*")
+        .gte("created_at", news_filter["start"]).lte("created_at", news_filter["end"])
+        .order("created_at", desc=True).execute()
     )
     news_data = news_response.data
 
-    # [MỚI] Dashboard thống kê trên toàn bộ dữ liệu trong khoảng thời gian đã chọn
     render_news_dashboard_stats(news_data)
 
-    # [MỚI] Search + Smart Filter
     news_filters = render_news_search_and_filter_controls("news", news_data)
     filtered_news = apply_news_filters(news_data, news_filters)
 
     st.metric("📰 Tổng số bài viết", f"{len(filtered_news)} / {len(news_data)}")
 
-    if len(filtered_news) > 0:
+    if filtered_news:
         for item in filtered_news:
             with st.container(border=True):
                 st.markdown(f"#### 📌 {item['title']}")
-                st.markdown(
-                    '<span class="badge-ai">🤖 Phân tích AI — đọc được kể cả khi bài gốc bị xóa</span>',
-                    unsafe_allow_html=True,
-                )
+                st.markdown('<span class="badge-ai">🤖 Phân tích AI — đọc được kể cả khi bài gốc bị xóa</span>',
+                             unsafe_allow_html=True)
 
                 render_metadata_badges(item)
                 render_ai_analysis_block(item.get("ai_analysis"))
@@ -1003,10 +584,7 @@ with tab1:
                             if r.status_code < 400:
                                 st.success("🟢 BÀI BÁO GỐC ĐANG HOẠT ĐỘNG")
                             else:
-                                st.error(
-                                    f"🔴 LỖI {r.status_code}: Bài gốc có thể đã bị xóa — "
-                                    "nhưng phân tích AI ở trên vẫn còn."
-                                )
+                                st.error(f"🔴 LỖI {r.status_code}: Bài gốc có thể đã bị xóa — nhưng phân tích AI ở trên vẫn còn.")
                         except Exception:
                             st.error("🔴 LỖI MẠNG — không kiểm tra được, nhưng phân tích AI ở trên vẫn còn.")
     else:
@@ -1019,35 +597,24 @@ with tab2:
 
     if git_filter["mode"] == "date":
         git_response = (
-            supabase.table("github_trending")
-            .select("*")
-            .eq("fetched_date", git_filter["selected_date"].isoformat())
-            .eq("period", "daily")
-            .order("created_at", desc=True)
-            .limit(10)
-            .execute()
+            supabase.table("github_trending").select("*")
+            .eq("fetched_date", git_filter["selected_date"].isoformat()).eq("period", "daily")
+            .order("created_at", desc=True).limit(10).execute()
         )
     else:
         period_val = "weekly" if git_filter["time_period"] == "Tuần này" else "monthly"
-        past_date = (
-            git_filter["now"].date() - datetime.timedelta(days=7 if period_val == "weekly" else 30)
-        ).isoformat()
+        past_date = (git_filter["now"].date() - datetime.timedelta(days=7 if period_val == "weekly" else 30)).isoformat()
         git_response = (
-            supabase.table("github_trending")
-            .select("*")
-            .eq("period", period_val)
-            .gte("fetched_date", past_date)
-            .order("fetched_date", desc=True)
-            .execute()
+            supabase.table("github_trending").select("*")
+            .eq("period", period_val).gte("fetched_date", past_date)
+            .order("fetched_date", desc=True).execute()
         )
 
     git_data = git_response.data
-
-    # [MỚI] Search cho GitHub trending
     git_search_query = render_github_search_control("github")
     git_data = apply_github_search(git_data, git_search_query)
 
-    if len(git_data) > 0:
+    if git_data:
         df = pd.DataFrame(git_data)
         df = df.drop_duplicates(subset=["repo_link"]).head(10)
         df["Trend Score"] = range(len(df), 0, -1)
@@ -1081,37 +648,3 @@ with tab2:
             "Chưa có dữ liệu cho mốc thời gian này (hoặc không khớp từ khóa tìm kiếm). "
             "*(Lưu ý: Dữ liệu của những ngày trước khi tạo hệ thống sẽ không tồn tại).*"
         )
-
-
-# ==========================================
-# 2. HỆ THỐNG CÀO DỮ LIỆU CHẠY NGẦM (BACKGROUND)
-# ==========================================
-@st.cache_data(ttl=900, show_spinner=False)
-def auto_scrape_data():
-    try:
-        active_sources = get_active_rss_sources()
-        links = [s["url"] for s in active_sources if s.get("is_active", True)]
-        if links:
-            fetch_and_save_news(links)
-    except Exception:
-        pass
-    fetch_and_save_github()
-    return datetime.datetime.now()
-
-
-with status_placeholder:
-    with st.spinner("Đang cập nhật nguồn dữ liệu ngầm..."):
-        if force_refresh:
-            # Bo qua cache 15 phut, chay that ngay lap tuc de test / debug Groq
-            try:
-                active_sources = get_active_rss_sources()
-                links = [s["url"] for s in active_sources if s.get("is_active", True)]
-                if links:
-                    fetch_and_save_news(links)
-            except Exception:
-                pass
-            fetch_and_save_github()
-            last_run_time = datetime.datetime.now()
-        else:
-            last_run_time = auto_scrape_data()
-    st.success(f"✅ Đã đồng bộ lúc {last_run_time.strftime('%H:%M:%S')}")
