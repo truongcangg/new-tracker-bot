@@ -7,54 +7,87 @@ import pandas as pd
 from supabase import create_client, Client
 from groq import Groq
 
-import core  # toan bo logic cao + phan tich AI nam o day, dung chung voi scraper.py (GitHub Actions)
+import core  # toan bo logic cao + phan tich AI, dung chung voi scraper.py (GitHub Actions)
 
 # ==========================================
-# CẤU HÌNH TRANG & GIAO DIỆN
+# CẤU HÌNH TRANG & GIAO DIỆN (theme tối, hiện đại, kiểu trading dashboard)
 # ==========================================
 st.set_page_config(page_title="Trading Terminal & Trend Tracker", layout="wide", page_icon="📈")
 
 st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+    /* Nen tong the toi hon, trung tinh hon mac dinh cua Streamlit */
+    .stApp { background-color: #0B0F1A; }
+
     .main-header {
-        background: linear-gradient(90deg, #6C63FF 0%, #00D4FF 100%);
-        padding: 24px 28px;
-        border-radius: 14px;
-        margin-bottom: 22px;
+        background: linear-gradient(120deg, #6C63FF 0%, #4C8DFF 55%, #00D4FF 100%);
+        padding: 26px 32px;
+        border-radius: 18px;
+        margin-bottom: 24px;
+        box-shadow: 0 8px 30px rgba(76, 141, 255, 0.15);
     }
-    .main-header h1 { color: white; margin: 0; font-size: 28px; }
-    .main-header p { color: #EAEAFF; margin: 4px 0 0 0; font-size: 14px; }
+    .main-header h1 { color: white; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.3px; }
+    .main-header p { color: rgba(255,255,255,0.85); margin: 6px 0 0 0; font-size: 13.5px; font-weight: 500; }
+
+    /* ---------- KPI cards (hang chi so dau moi tab) ---------- */
+    .kpi-row { display: flex; gap: 14px; margin-bottom: 22px; flex-wrap: wrap; }
+    .kpi-card {
+        flex: 1 1 180px;
+        background: linear-gradient(180deg, #131A2B 0%, #0F1524 100%);
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 14px;
+        padding: 16px 18px;
+    }
+    .kpi-label { font-size: 12px; color: #8A93A8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+    .kpi-value { font-size: 24px; color: #F2F4F8; font-weight: 800; margin-top: 6px; }
+    .kpi-sub { font-size: 12px; color: #6C63FF; font-weight: 600; margin-top: 4px; }
+
+    /* ---------- Card bai bao / repo ---------- */
+    .item-card {
+        background: #10161F;
+        border: 1px solid rgba(255,255,255,0.06);
+        border-left: 3px solid #6C63FF;
+        border-radius: 12px;
+        padding: 18px 20px;
+        margin-bottom: 14px;
+    }
+    .item-card.sentiment-Positive { border-left-color: #22C55E; }
+    .item-card.sentiment-Negative { border-left-color: #EF4444; }
+    .item-card.sentiment-Neutral  { border-left-color: #8A93A8; }
+
+    .item-title { font-size: 16px; font-weight: 700; color: #F2F4F8; margin: 0 0 8px 0; line-height: 1.4; }
+
+    .pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .pill {
+        font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+        background: rgba(108, 99, 255, 0.14); color: #A79BFF;
+    }
+    .pill-sentiment-Positive { background: rgba(34,197,94,0.14); color: #4ADE80; }
+    .pill-sentiment-Negative { background: rgba(239,68,68,0.14); color: #F87171; }
+    .pill-sentiment-Neutral  { background: rgba(138,147,168,0.14); color: #B3BACB; }
+    .pill-importance { background: rgba(0,212,255,0.14); color: #5FDFFF; }
+    .pill-tag { background: rgba(255,255,255,0.06); color: #C7CCDA; }
+
     .badge-ai {
-        display: inline-block;
-        background: rgba(108, 99, 255, 0.15);
-        color: #8B7FFF;
-        padding: 3px 10px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 600;
-        margin-bottom: 8px;
+        display: inline-block; background: rgba(108, 99, 255, 0.12); color: #A79BFF;
+        padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-bottom: 10px;
     }
     .impact-box {
-        background: rgba(0, 212, 255, 0.08);
-        border-left: 3px solid #00D4FF;
-        padding: 10px 14px;
-        border-radius: 6px;
-        margin: 8px 0;
+        background: rgba(0, 212, 255, 0.06); border-left: 3px solid #00D4FF;
+        padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 13.5px; color: #D7DCE8;
     }
     .detail-box {
-        background: rgba(140, 140, 160, 0.06);
-        border-left: 3px solid #8B7FFF;
-        padding: 10px 14px;
-        border-radius: 6px;
-        margin: 8px 0;
-        font-size: 14px;
-        line-height: 1.6;
+        background: rgba(255,255,255,0.03); border-left: 3px solid #6C63FF;
+        padding: 12px 14px; border-radius: 8px; font-size: 13.5px; line-height: 1.7; color: #C7CCDA;
     }
-    div[data-testid="stMetric"] {
-        background: rgba(120, 120, 140, 0.08);
-        border-radius: 12px;
-        padding: 14px 16px;
-    }
+
+    div[data-testid="stMetric"] { background: rgba(120, 120, 140, 0.08); border-radius: 12px; padding: 14px 16px; }
+
+    /* An thanh cong cu zoom mac dinh cua vega/altair chart trong dashboard thong ke */
+    div[data-testid="stVegaLiteChart"] .vega-actions { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -81,13 +114,12 @@ def init_groq() -> Groq:
 supabase = init_db()
 groq_client = init_groq()
 
-# Log lỗi Groq gần nhất khi bấm nút "Chạy ngay" thủ công trong phiên hiện tại
 if "manual_run_log" not in st.session_state:
     st.session_state["manual_run_log"] = []
 
 
 # ==========================================
-# QUẢN LÝ NGUỒN RSS (CRUD qua Supabase — không liên quan tới việc cào dữ liệu)
+# QUẢN LÝ NGUỒN RSS
 # ==========================================
 def get_active_rss_sources():
     try:
@@ -141,8 +173,6 @@ def check_rss_status(url):
 
 
 def get_last_sync_time():
-    """Doc thoi diem ban ghi moi nhat trong DB - phan anh dung lan cao gan nhat
-    (du la do GitHub Actions cron hay do ban bam nut Chay ngay)."""
     latest = None
     for table in ("news", "github_trending"):
         try:
@@ -157,7 +187,25 @@ def get_last_sync_time():
 
 
 # ==========================================
-# HIỂN THỊ PHÂN TÍCH AI (tóm tắt + chi tiết + tác động + metadata)
+# COMPONENT: KPI ROW (hang the chi so kieu dashboard chuyen nghiep)
+# ==========================================
+def render_kpi_row(items: list):
+    """items: list of {label, value, sub (optional)}"""
+    cards_html = ""
+    for item in items:
+        sub_html = f'<div class="kpi-sub">{item["sub"]}</div>' if item.get("sub") else ""
+        cards_html += f"""
+        <div class="kpi-card">
+            <div class="kpi-label">{item['label']}</div>
+            <div class="kpi-value">{item['value']}</div>
+            {sub_html}
+        </div>
+        """
+    st.markdown(f'<div class="kpi-row">{cards_html}</div>', unsafe_allow_html=True)
+
+
+# ==========================================
+# HIỂN THỊ PHÂN TÍCH AI
 # ==========================================
 def render_ai_analysis_block(analysis: dict):
     if not analysis:
@@ -188,21 +236,42 @@ def render_ai_analysis_block(analysis: dict):
             st.markdown(f"- {p}")
 
 
-def render_metadata_badges(item: dict):
+def _pill_row_html(item: dict) -> str:
     category = item.get("category") or core.DEFAULT_CATEGORY
     sentiment = item.get("sentiment") or core.DEFAULT_SENTIMENT
     importance = item.get("importance", core.DEFAULT_IMPORTANCE)
-    tags = item.get("tags") or []
+    tags = (item.get("tags") or [])[:4]
 
     sentiment_icon = {"Positive": "🟢", "Neutral": "⚪", "Negative": "🔴"}.get(sentiment, "⚪")
-    line = f"`{category}`&nbsp;&nbsp;·&nbsp;&nbsp;{sentiment_icon} {sentiment}&nbsp;&nbsp;·&nbsp;&nbsp;⭐ {importance}/10"
-    if tags:
-        line += "&nbsp;&nbsp;·&nbsp;&nbsp;🏷️ " + ", ".join(tags)
-    st.markdown(f'<div style="font-size:13px; color:#999; margin-bottom:6px;">{line}</div>', unsafe_allow_html=True)
+    pills = f'<span class="pill">{category}</span>'
+    pills += f'<span class="pill pill-sentiment-{sentiment}">{sentiment_icon} {sentiment}</span>'
+    pills += f'<span class="pill pill-importance">⭐ {importance}/10</span>'
+    for t in tags:
+        pills += f'<span class="pill pill-tag">🏷️ {t}</span>'
+    return f'<div class="pill-row">{pills}</div>'
 
 
+def render_item_card_open(item: dict, badge_text: str):
+    """Mo the item (chua title + pill + badge AI). Dung chung cho news va github."""
+    sentiment = item.get("sentiment") or core.DEFAULT_SENTIMENT
+    title = item.get("title") or item.get("repo_name", "")
+    st.markdown(
+        f'<div class="item-card sentiment-{sentiment}">'
+        f'<div class="item-title">{title}</div>'
+        f'{_pill_row_html(item)}'
+        f'<span class="badge-ai">{badge_text}</span>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_item_card_close():
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ==========================================
+# BIỂU ĐỒ (KHOÁ ZOOM/PAN — chỉ giữ tương tác click-mở-link)
+# ==========================================
 def render_clickable_trend_chart(df: pd.DataFrame):
-    """Biểu đồ cột ngang Plotly.js thuần để bar có thể CLICK và mở thẳng link repo trong tab mới."""
     labels = json.dumps(df["repo_name"].tolist())
     values = json.dumps(df["Trend Score"].tolist())
     links = json.dumps(df["repo_link"].tolist())
@@ -223,34 +292,32 @@ def render_clickable_trend_chart(df: pd.DataFrame):
         }}];
         var layout = {{
             margin: {{ l: 10, r: 20, t: 10, b: 30 }},
-            yaxis: {{ autorange: 'reversed', automargin: true, showgrid: false }},
-            xaxis: {{ showgrid: false, zeroline: false, title: 'Trend Score' }},
+            yaxis: {{ autorange: 'reversed', automargin: true, showgrid: false, fixedrange: true }},
+            xaxis: {{ showgrid: false, zeroline: false, title: 'Trend Score', fixedrange: true }},
+            dragmode: false,
             plot_bgcolor: 'rgba(0,0,0,0)', paper_bgcolor: 'rgba(0,0,0,0)', font: {{ color: '#EAEAEA' }}
         }};
-        Plotly.newPlot('trend-chart', data, layout, {{ displayModeBar: false, responsive: true }});
+        // scrollZoom: false + fixedrange = khong the phong to/thu nho hay keo pan bieu do
+        Plotly.newPlot('trend-chart', data, layout, {{
+            displayModeBar: false, responsive: true, scrollZoom: false, doubleClick: false
+        }});
         document.getElementById('trend-chart').on('plotly_click', function(evt) {{
             window.open(links[evt.points[0].pointIndex], '_blank');
         }});
     </script>
-    <p style="color:#888; font-size:12px; margin-top:4px;">💡 Nhấp vào một cột để mở repo trong tab mới.</p>
+    <p style="color:#6C7386; font-size:12px; margin-top:6px;">💡 Nhấp vào một cột để mở repo trong tab mới.</p>
     """
     st.components.v1.html(html_code, height=470)
 
 
-def render_tag_mindmap(data: list, container_key: str):
-    """
-    Mind map dang bubble network: moi bubble la 1 tag, noi voi nhau neu 2 tag
-    cung xuat hien trong 1 bai bao (co-occurrence). Kich thuoc bubble = tan suat
-    xuat hien. Dung vis-network.js (CDN) qua HTML component - khong can them
-    dependency Python nao.
-    """
+def render_tag_mindmap(data: list):
     from collections import Counter
     from itertools import combinations
 
     tag_counts = Counter()
     edge_counts = Counter()
     for item in data:
-        tags = list(dict.fromkeys(item.get("tags") or []))  # bo trung trong cung 1 bai
+        tags = list(dict.fromkeys(item.get("tags") or []))
         for t in tags:
             tag_counts[t] += 1
         for a, b in combinations(sorted(tags), 2):
@@ -262,19 +329,12 @@ def render_tag_mindmap(data: list, container_key: str):
 
     top_tags = [t for t, _ in tag_counts.most_common(30)]
     top_tags_set = set(top_tags)
-
-    nodes = [
-        {"id": t, "label": t, "value": tag_counts[t]}
-        for t in top_tags
-    ]
-    edges = [
-        {"from": a, "to": b, "value": c}
-        for (a, b), c in edge_counts.items()
-        if a in top_tags_set and b in top_tags_set and c > 0
-    ]
+    nodes = [{"id": t, "label": t, "value": tag_counts[t]} for t in top_tags]
+    edges = [{"from": a, "to": b, "value": c} for (a, b), c in edge_counts.items()
+              if a in top_tags_set and b in top_tags_set and c > 0]
 
     html_code = f"""
-    <div id="mindmap" style="width:100%;height:520px;background:transparent;"></div>
+    <div id="mindmap" style="width:100%;height:480px;background:transparent;"></div>
     <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
     <script>
         var nodes = new vis.DataSet({json.dumps(nodes)});
@@ -283,25 +343,19 @@ def render_tag_mindmap(data: list, container_key: str):
         var data = {{ nodes: nodes, edges: edges }};
         var options = {{
             nodes: {{
-                shape: 'dot',
-                scaling: {{ min: 12, max: 45 }},
-                font: {{ color: '#EAEAEA', size: 14 }},
+                shape: 'dot', scaling: {{ min: 12, max: 42 }},
+                font: {{ color: '#EAEAEA', size: 13, face: 'Inter' }},
                 color: {{ background: '#6C63FF', border: '#00D4FF', highlight: {{ background: '#00D4FF' }} }}
             }},
-            edges: {{
-                color: {{ color: 'rgba(140,140,170,0.35)', highlight: '#00D4FF' }},
-                smooth: {{ type: 'continuous' }}
-            }},
-            physics: {{
-                stabilization: true,
-                barnesHut: {{ gravitationalConstant: -3000, springLength: 110, springConstant: 0.03 }}
-            }},
-            interaction: {{ hover: true, tooltipDelay: 100 }}
+            edges: {{ color: {{ color: 'rgba(140,140,170,0.3)', highlight: '#00D4FF' }}, smooth: {{ type: 'continuous' }} }},
+            physics: {{ stabilization: true, barnesHut: {{ gravitationalConstant: -2600, springLength: 105, springConstant: 0.03 }} }},
+            interaction: {{ hover: true, tooltipDelay: 100, zoomView: false, dragView: true }}
         }};
+        // zoomView: false -> khong the cuon chuot de phong to/thu nho mind map (tranh giat khi cuon trang)
         new vis.Network(container, data, options);
     </script>
     """
-    st.components.v1.html(html_code, height=530)
+    st.components.v1.html(html_code, height=490)
 
 
 def render_time_filter(prefix: str):
@@ -434,7 +488,7 @@ def render_news_dashboard_stats(data: list):
 
         st.markdown("**🕸️ Mind Map — mối liên kết giữa các chủ đề/tags**")
         st.caption("Bubble càng lớn = tag xuất hiện càng nhiều. Đường nối = 2 tag cùng xuất hiện trong 1 bài báo.")
-        render_tag_mindmap(data, "news_mindmap")
+        render_tag_mindmap(data)
 
 
 def render_github_search_control(prefix: str):
@@ -562,31 +616,34 @@ with tab1:
     news_filters = render_news_search_and_filter_controls("news", news_data)
     filtered_news = apply_news_filters(news_data, news_filters)
 
-    st.metric("📰 Tổng số bài viết", f"{len(filtered_news)} / {len(news_data)}")
+    pos = sum(1 for d in news_data if (d.get("sentiment") or core.DEFAULT_SENTIMENT) == "Positive")
+    high_impact = sum(1 for d in news_data if (d.get("importance") or 0) >= 8)
+    render_kpi_row([
+        {"label": "Tổng bài viết", "value": f"{len(filtered_news)}/{len(news_data)}", "sub": "đang hiển thị / tổng"},
+        {"label": "Nguồn RSS", "value": str(len(sources)), "sub": "đang theo dõi"},
+        {"label": "Tích cực (Positive)", "value": str(pos), "sub": f"{round(pos/len(news_data)*100) if news_data else 0}% tổng số"},
+        {"label": "Mức độ cao (≥8/10)", "value": str(high_impact), "sub": "bài quan trọng"},
+    ])
 
     if filtered_news:
         for item in filtered_news:
-            with st.container(border=True):
-                st.markdown(f"#### 📌 {item['title']}")
-                st.markdown('<span class="badge-ai">🤖 Phân tích AI — đọc được kể cả khi bài gốc bị xóa</span>',
-                             unsafe_allow_html=True)
+            render_item_card_open(item, "🤖 Phân tích AI — đọc được kể cả khi bài gốc bị xóa")
+            render_ai_analysis_block(item.get("ai_analysis"))
 
-                render_metadata_badges(item)
-                render_ai_analysis_block(item.get("ai_analysis"))
-
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    st.markdown(f"🔗 [Đọc bài gốc]({item['link']})")
-                with col2:
-                    if st.button("🔍 Kiểm tra trạng thái bài gốc", key=f"check_{item['id']}"):
-                        try:
-                            r = requests.head(item["link"], timeout=5, allow_redirects=True)
-                            if r.status_code < 400:
-                                st.success("🟢 BÀI BÁO GỐC ĐANG HOẠT ĐỘNG")
-                            else:
-                                st.error(f"🔴 LỖI {r.status_code}: Bài gốc có thể đã bị xóa — nhưng phân tích AI ở trên vẫn còn.")
-                        except Exception:
-                            st.error("🔴 LỖI MẠNG — không kiểm tra được, nhưng phân tích AI ở trên vẫn còn.")
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                st.markdown(f"🔗 [Đọc bài gốc]({item['link']})")
+            with col2:
+                if st.button("🔍 Kiểm tra trạng thái bài gốc", key=f"check_{item['id']}"):
+                    try:
+                        r = requests.head(item["link"], timeout=5, allow_redirects=True)
+                        if r.status_code < 400:
+                            st.success("🟢 BÀI BÁO GỐC ĐANG HOẠT ĐỘNG")
+                        else:
+                            st.error(f"🔴 LỖI {r.status_code}: Bài gốc có thể đã bị xóa — nhưng phân tích AI ở trên vẫn còn.")
+                    except Exception:
+                        st.error("🔴 LỖI MẠNG — không kiểm tra được, nhưng phân tích AI ở trên vẫn còn.")
+            render_item_card_close()
     else:
         st.info("Không tìm thấy bài viết nào khớp với bộ lọc / từ khóa tìm kiếm hiện tại.")
 
@@ -619,30 +676,31 @@ with tab2:
         df = df.drop_duplicates(subset=["repo_link"]).head(10)
         df["Trend Score"] = range(len(df), 0, -1)
 
-        st.metric("🔥 Dự án đang nổi bật", len(df))
+        render_kpi_row([
+            {"label": "Dự án nổi bật", "value": str(len(df)), "sub": git_filter["title"]},
+            {"label": "Trend Score cao nhất", "value": str(int(df["Trend Score"].max())), "sub": df.iloc[0]["repo_name"][:20]},
+        ])
         render_clickable_trend_chart(df)
 
         st.write("### Chi tiết các dự án:")
         for item in df.to_dict("records"):
-            with st.container(border=True):
-                st.markdown(f"#### 📦 {item['repo_name']}")
-                st.markdown('<span class="badge-ai">🤖 Phân tích AI</span>', unsafe_allow_html=True)
+            render_item_card_open(item, "🤖 Phân tích AI")
+            render_ai_analysis_block(item.get("ai_analysis"))
 
-                render_ai_analysis_block(item.get("ai_analysis"))
-
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    st.markdown(f"🔗 [Truy cập GitHub]({item['repo_link']})")
-                with col2:
-                    if st.button("🔍 Kiểm tra Repo", key=f"git_{item['id']}"):
-                        try:
-                            r = requests.head(item["repo_link"], timeout=5, allow_redirects=True)
-                            if r.status_code < 400:
-                                st.success("🟢 Dự án hoạt động bình thường!")
-                            else:
-                                st.error(f"🔴 Lỗi {r.status_code}: Repo đã bị xóa/Private!")
-                        except Exception:
-                            st.error("🔴 Lỗi kết nối!")
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                st.markdown(f"🔗 [Truy cập GitHub]({item['repo_link']})")
+            with col2:
+                if st.button("🔍 Kiểm tra Repo", key=f"git_{item['id']}"):
+                    try:
+                        r = requests.head(item["repo_link"], timeout=5, allow_redirects=True)
+                        if r.status_code < 400:
+                            st.success("🟢 Dự án hoạt động bình thường!")
+                        else:
+                            st.error(f"🔴 Lỗi {r.status_code}: Repo đã bị xóa/Private!")
+                    except Exception:
+                        st.error("🔴 Lỗi kết nối!")
+            render_item_card_close()
     else:
         st.warning(
             "Chưa có dữ liệu cho mốc thời gian này (hoặc không khớp từ khóa tìm kiếm). "
