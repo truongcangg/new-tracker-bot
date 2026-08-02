@@ -1,9 +1,11 @@
 name: Trading Terminal Scheduler
 
+# Lich chay chinh gio la cron-job.org goi API "workflow_dispatch" ben duoi moi 20
+# phut (dang tin cay hon nhieu so voi trigger "schedule" noi bo cua GitHub, von
+# chi la best-effort va co the bi tre hang gio). workflow_dispatch cung cho phep
+# ban bam "Run workflow" tren tab Actions de chay tay bat cu luc nao.
 on:
-  schedule:
-    - cron: "*/20 * * * *"   # moi 20 phut - GitHub co the tre vai phut so voi lich neu repo it hoat dong
-  workflow_dispatch: {}        # cho phep bam "Run workflow" tren tab Actions de chay tay/test
+  workflow_dispatch: {}
 
 jobs:
   run-tracker:
