@@ -186,6 +186,265 @@ def get_last_sync_time():
     return latest
 
 
+def _format_relative(ts_str: str) -> str:
+    try:
+        ts = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        now = datetime.datetime.now(datetime.timezone.utc)
+        diff = now - ts
+        mins = int(diff.total_seconds() // 60)
+        if mins < 60:
+            return f"{max(mins, 0)} phút trước"
+        hours = mins // 60
+        if hours < 24:
+            return f"{hours} giờ trước"
+        return f"{hours // 24} ngày trước"
+    except Exception:
+        return ""
+
+
+# ==========================================
+# PANEL TỔNG QUAN (component HTML/CSS/Chart.js tự chứa — mật độ cao kiểu dashboard SaaS)
+# st.components.v1.html chạy trong iframe cách ly, KHÔNG dùng chung CSS của trang
+# chính, nên toàn bộ style + Chart.js phải khai báo lại đầy đủ ở đây.
+# ==========================================
+def render_overview_dashboard(supabase: Client):
+    from collections import Counter
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    week_ago = now - datetime.timedelta(days=7)
+    today_str = datetime.date.today().isoformat()
+
+    try:
+        news_7d = supabase.table("news").select(
+            "title,category,sentiment,tags,source,link,created_at"
+        ).gte("created_at", week_ago.isoformat()).order("created_at", desc=True).execute().data
+    except Exception:
+        news_7d = []
+
+    try:
+        git_today = supabase.table("github_trending").select("repo_name").eq(
+            "period", "daily"
+        ).eq("fetched_date", today_str).execute().data
+    except Exception:
+        git_today = []
+
+    try:
+        rss_total = len(supabase.table("rss_sources").select("id").execute().data)
+    except Exception:
+        rss_total = 0
+
+    total_articles = len(news_7d)
+    category_counts = Counter(n.get("category") or core.DEFAULT_CATEGORY for n in news_7d)
+    sentiment_counts = Counter(n.get("sentiment") or core.DEFAULT_SENTIMENT for n in news_7d)
+    pos_pct = round((sentiment_counts.get("Positive", 0) / total_articles) * 100) if total_articles else 0
+
+    # Xu huong 7 ngay gan nhat, dien 0 cho ngay khong co bai
+    day_buckets = {(now.date() - datetime.timedelta(days=i)): 0 for i in range(6, -1, -1)}
+    for n in news_7d:
+        try:
+            d = datetime.datetime.fromisoformat(n["created_at"].replace("Z", "+00:00")).date()
+            if d in day_buckets:
+                day_buckets[d] += 1
+        except Exception:
+            pass
+    trend_labels = [d.strftime("%d/%m") for d in day_buckets]
+    trend_values = list(day_buckets.values())
+
+    top_categories = category_counts.most_common(5)
+    cat_labels = [c for c, _ in top_categories]
+    cat_values = [v for _, v in top_categories]
+
+    sent_labels = ["Positive", "Neutral", "Negative"]
+    sent_values = [sentiment_counts.get(s, 0) for s in sent_labels]
+
+    latest_news = [{
+        "title": (n.get("title") or "")[:52] + ("…" if len(n.get("title") or "") > 52 else ""),
+        "sentiment": n.get("sentiment") or core.DEFAULT_SENTIMENT,
+        "time": _format_relative(n.get("created_at", "")),
+        "link": n.get("link") or "#",
+    } for n in news_7d[:5]]
+
+    source_counts = Counter((n.get("source") or "Unknown") for n in news_7d).most_common(5)
+    max_src = max((c for _, c in source_counts), default=1)
+    top_sources = [{
+        "label": (s.split("//")[-1].split("/")[0])[:26],
+        "count": c,
+        "pct": round((c / max_src) * 100),
+    } for s, c in source_counts]
+
+    all_tags = Counter(t for n in news_7d for t in (n.get("tags") or []))
+    trending_tags = [t for t, _ in all_tags.most_common(10)]
+
+    kpis = [
+        {"label": "Tổng bài viết", "value": str(total_articles), "sub": "7 ngày qua"},
+        {"label": "Nguồn RSS", "value": str(rss_total), "sub": "đang hoạt động"},
+        {"label": "GitHub Trending", "value": str(len(git_today)), "sub": "hôm nay"},
+        {"label": "Sentiment tích cực", "value": f"{pos_pct}%", "sub": f"{sentiment_counts.get('Positive', 0)} bài Positive"},
+    ]
+
+    sentiment_dot = {"Positive": "#22C55E", "Neutral": "#8A93A8", "Negative": "#EF4444"}
+
+    news_list_html = "".join(f"""
+        <a href="{n['link']}" target="_blank" class="news-row">
+            <span class="dot" style="background:{sentiment_dot.get(n['sentiment'], '#8A93A8')}"></span>
+            <span class="news-title">{n['title']}</span>
+            <span class="news-time">{n['time']}</span>
+        </a>
+    """ for n in latest_news) or '<div class="empty-hint">Chưa có bài viết trong 7 ngày qua.</div>'
+
+    sources_list_html = "".join(f"""
+        <div class="src-row">
+            <span class="src-label">{s['label']}</span>
+            <div class="src-bar-track"><div class="src-bar-fill" style="width:{s['pct']}%"></div></div>
+            <span class="src-count">{s['count']}</span>
+        </div>
+    """ for s in top_sources) or '<div class="empty-hint">Chưa có dữ liệu nguồn.</div>'
+
+    tags_html = "".join(f'<span class="tag-pill">{t}</span>' for t in trending_tags) or \
+        '<span class="empty-hint">Chưa có tags.</span>'
+
+    kpi_html = "".join(f"""
+        <div class="ov-kpi">
+            <div class="ov-kpi-label">{k['label']}</div>
+            <div class="ov-kpi-value">{k['value']}</div>
+            <div class="ov-kpi-sub">{k['sub']}</div>
+        </div>
+    """ for k in kpis)
+
+    html_code = f"""
+    <style>
+        * {{ box-sizing: border-box; font-family: 'Inter', -apple-system, sans-serif; }}
+        body {{ margin: 0; background: transparent; }}
+        .panel {{
+            background: linear-gradient(160deg, #131A2B 0%, #0D1220 100%);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 18px;
+            padding: 20px 22px;
+            color: #EAEDF5;
+        }}
+        .panel-head {{ display:flex; align-items:baseline; gap:10px; margin-bottom:16px; }}
+        .panel-head h2 {{ font-size: 15px; font-weight: 800; margin: 0; letter-spacing: 0.3px; }}
+        .panel-head span {{ font-size: 11.5px; color: #7A8299; }}
+
+        .ov-kpi-row {{ display:grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }}
+        .ov-kpi {{ background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 10px 12px; }}
+        .ov-kpi-label {{ font-size: 10px; color: #7A8299; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }}
+        .ov-kpi-value {{ font-size: 19px; font-weight: 800; margin-top: 3px; color: #F2F4F8; }}
+        .ov-kpi-sub {{ font-size: 10.5px; color: #6C63FF; font-weight: 600; margin-top: 2px; }}
+
+        .row2 {{ display:grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 10px; margin-bottom: 10px; }}
+        .row2b {{ display:grid; grid-template-columns: 1.2fr 1fr; gap: 10px; margin-bottom: 10px; }}
+        .card {{ background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 10px 12px; }}
+        .card-title {{ font-size: 11px; font-weight: 700; color: #C7CCDA; margin-bottom: 6px; }}
+
+        .news-row {{
+            display:flex; align-items:center; gap:8px; padding:6px 2px; text-decoration:none;
+            border-bottom: 1px solid rgba(255,255,255,0.04); color:inherit;
+        }}
+        .news-row:last-child {{ border-bottom: none; }}
+        .dot {{ width:7px; height:7px; border-radius:50%; flex-shrink:0; }}
+        .news-title {{ font-size: 11.5px; color:#DDE1EC; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+        .news-time {{ font-size: 10px; color:#6C7386; flex-shrink:0; }}
+
+        .src-row {{ display:flex; align-items:center; gap:8px; padding: 5px 0; }}
+        .src-label {{ font-size: 11px; color:#C7CCDA; width: 100px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+        .src-bar-track {{ flex:1; height:6px; background:rgba(255,255,255,0.06); border-radius:4px; overflow:hidden; }}
+        .src-bar-fill {{ height:100%; background: linear-gradient(90deg,#6C63FF,#00D4FF); border-radius:4px; }}
+        .src-count {{ font-size: 11px; color:#8A93A8; width: 22px; text-align:right; flex-shrink:0; }}
+
+        .tags-row {{ display:flex; flex-wrap:wrap; gap:6px; margin-top: 4px; }}
+        .tag-pill {{ font-size: 10.5px; background:rgba(108,99,255,0.13); color:#A79BFF; padding:3px 9px; border-radius:999px; font-weight:600; }}
+        .empty-hint {{ font-size: 11px; color:#5B6272; padding: 8px 0; }}
+    </style>
+
+    <div class="panel">
+        <div class="panel-head">
+            <h2>📊 TRADING TERMINAL DASHBOARD</h2>
+            <span>Tổng quan toàn bộ dữ liệu & xu hướng — 7 ngày qua</span>
+        </div>
+
+        <div class="ov-kpi-row">{kpi_html}</div>
+
+        <div class="row2">
+            <div class="card">
+                <div class="card-title">Xu hướng bài viết theo thời gian</div>
+                <canvas id="trendLine" height="90"></canvas>
+            </div>
+            <div class="card">
+                <div class="card-title">Phân bố theo Category</div>
+                <canvas id="catDonut" height="90"></canvas>
+            </div>
+            <div class="card">
+                <div class="card-title">Sentiment Distribution</div>
+                <canvas id="sentDonut" height="90"></canvas>
+            </div>
+        </div>
+
+        <div class="row2b">
+            <div class="card">
+                <div class="card-title">📰 Tin tức mới nhất</div>
+                {news_list_html}
+            </div>
+            <div class="card">
+                <div class="card-title">📡 Top Sources</div>
+                {sources_list_html}
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:10px;">
+            <div class="card-title">🔥 Trending Keywords</div>
+            <div class="tags-row">{tags_html}</div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script>
+        const gridColor = 'rgba(255,255,255,0.05)';
+        const textColor = '#7A8299';
+        Chart.defaults.color = textColor;
+        Chart.defaults.font.size = 10;
+
+        new Chart(document.getElementById('trendLine'), {{
+            type: 'line',
+            data: {{
+                labels: {json.dumps(trend_labels)},
+                datasets: [{{
+                    data: {json.dumps(trend_values)},
+                    borderColor: '#00D4FF', backgroundColor: 'rgba(0,212,255,0.12)',
+                    tension: 0.35, fill: true, pointRadius: 2, borderWidth: 2
+                }}]
+            }},
+            options: {{
+                responsive: true, plugins: {{ legend: {{ display: false }} }},
+                scales: {{
+                    x: {{ grid: {{ display: false }} }},
+                    y: {{ grid: {{ color: gridColor }}, beginAtZero: true, ticks: {{ precision: 0 }} }}
+                }}
+            }}
+        }});
+
+        new Chart(document.getElementById('catDonut'), {{
+            type: 'doughnut',
+            data: {{
+                labels: {json.dumps(cat_labels)},
+                datasets: [{{ data: {json.dumps(cat_values)}, backgroundColor: ['#6C63FF','#00D4FF','#22C55E','#F59E0B','#EF4444'], borderWidth: 0 }}]
+            }},
+            options: {{ responsive: true, cutout: '65%', plugins: {{ legend: {{ position: 'bottom', labels: {{ boxWidth: 8, padding: 8 }} }} }} }}
+        }});
+
+        new Chart(document.getElementById('sentDonut'), {{
+            type: 'doughnut',
+            data: {{
+                labels: {json.dumps(sent_labels)},
+                datasets: [{{ data: {json.dumps(sent_values)}, backgroundColor: ['#22C55E','#8A93A8','#EF4444'], borderWidth: 0 }}]
+            }},
+            options: {{ responsive: true, cutout: '65%', plugins: {{ legend: {{ position: 'bottom', labels: {{ boxWidth: 8, padding: 8 }} }} }} }}
+        }});
+    </script>
+    """
+    st.components.v1.html(html_code, height=640, scrolling=False)
+
+
 # ==========================================
 # COMPONENT: KPI ROW (hang the chi so kieu dashboard chuyen nghiep)
 # ==========================================
@@ -505,6 +764,7 @@ def apply_github_search(data: list, query: str) -> list:
 # ==========================================
 # 1. HIỂN THỊ GIAO DIỆN NGAY LẬP TỨC (UI FIRST)
 # ==========================================
+render_overview_dashboard(supabase)
 
 with st.sidebar:
     st.header("⚙️ Bảng Điều Khiển")
