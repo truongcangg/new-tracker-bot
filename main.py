@@ -46,9 +46,10 @@ SENTIMENT_ICON = {"Positive": "🟢", "Neutral": "⚪", "Negative": "🔴"}
 # CSS TOÀN CỤC
 # ==========================================
 st.markdown(f"""
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-    html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
+    html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; font-size: 15.5px; }}
+    .mono {{ font-family: 'JetBrains Mono', monospace; }}
     .stApp {{ background-color: {BG}; }}
     #MainMenu, footer, header[data-testid="stHeader"] {{ background: transparent; }}
     .block-container {{ padding-top: 1.6rem; padding-bottom: 3rem; max-width: 1440px; }}
@@ -95,11 +96,11 @@ st.markdown(f"""
 
     /* ---------- Page header ---------- */
     .page-header {{ display:flex; align-items:flex-end; justify-content:space-between; margin-bottom: 22px; flex-wrap: wrap; gap: 12px; }}
-    .page-title {{ color:{TEXT}; font-size: 24px; font-weight: 800; letter-spacing:-0.3px; margin:0; display:flex; align-items:center; gap:10px;}}
-    .page-subtitle {{ color:{TEXT_DIM}; font-size: 13px; font-weight:500; margin-top: 5px; }}
+    .page-title {{ color:{TEXT}; font-size: 26px; font-weight: 800; letter-spacing:-0.3px; margin:0; display:flex; align-items:center; gap:10px;}}
+    .page-subtitle {{ color:{TEXT_DIM}; font-size: 14px; font-weight:500; margin-top: 5px; }}
     .header-chip {{
         background: {PANEL_FROM}; border: 1px solid {BORDER}; border-radius: 999px;
-        padding: 7px 14px; font-size: 12px; font-weight:600; color:{TEXT_DIM};
+        padding: 7px 14px; font-size: 12.5px; font-weight:600; color:{TEXT_DIM};
     }}
 
     /* ---------- KPI cards ---------- */
@@ -108,9 +109,9 @@ st.markdown(f"""
         background: linear-gradient(180deg, {PANEL_FROM} 0%, {PANEL_TO} 100%);
         border: 1px solid {BORDER}; border-radius: 14px; padding: 16px 18px;
     }}
-    .kpi-label {{ font-size: 11.5px; color: {TEXT_DIM}; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }}
-    .kpi-value {{ font-size: 25px; color: {TEXT}; font-weight: 800; margin-top: 7px; }}
-    .kpi-sub {{ font-size: 12px; font-weight: 600; margin-top: 5px; color:{TEXT_DIM}; }}
+    .kpi-label {{ font-size: 12px; color: {TEXT_DIM}; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }}
+    .kpi-value {{ font-family:'JetBrains Mono',monospace; font-size: 27px; color: {TEXT}; font-weight: 700; margin-top: 7px; }}
+    .kpi-sub {{ font-size: 12.5px; font-weight: 600; margin-top: 5px; color:{TEXT_DIM}; }}
     .kpi-sub.up {{ color: {GREEN}; }}
     .kpi-sub.down {{ color: {RED}; }}
 
@@ -119,8 +120,8 @@ st.markdown(f"""
         background: linear-gradient(160deg, {PANEL_FROM} 0%, {PANEL_TO} 100%);
         border: 1px solid {BORDER}; border-radius: 16px; padding: 18px 20px; margin-bottom: 16px;
     }}
-    .panel-card-title {{ font-size: 13px; font-weight: 800; color:{TEXT}; margin-bottom: 4px; letter-spacing:0.2px; }}
-    .panel-card-sub {{ font-size: 11.5px; color:{TEXT_DIMMER}; margin-bottom: 12px; }}
+    .panel-card-title {{ font-size: 14px; font-weight: 800; color:{TEXT}; margin-bottom: 4px; letter-spacing:0.2px; }}
+    .panel-card-sub {{ font-size: 12.5px; color:{TEXT_DIMMER}; margin-bottom: 12px; }}
 
     /* ---------- item card (bai bao / repo) ---------- */
     .item-card {{
@@ -130,19 +131,20 @@ st.markdown(f"""
     .item-card.sentiment-Positive {{ border-left-color: {GREEN}; }}
     .item-card.sentiment-Negative {{ border-left-color: {RED}; }}
     .item-card.sentiment-Neutral  {{ border-left-color: {TEXT_DIM}; }}
-    .item-title {{ font-size: 16px; font-weight: 700; color: {TEXT}; margin: 0 0 8px 0; line-height: 1.4; }}
+    .item-title {{ font-size: 17px; font-weight: 700; color: {TEXT}; margin: 0 0 8px 0; line-height: 1.45; }}
+    .item-rank {{ font-family:'JetBrains Mono',monospace; color:{TEXT_DIM}; font-size:12.5px; margin-right:8px; }}
 
     .pill-row {{ display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }}
-    .pill {{ font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: rgba(108,99,255,0.14); color: #A79BFF; }}
+    .pill {{ font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: rgba(108,99,255,0.14); color: #A79BFF; }}
     .pill-sentiment-Positive {{ background: rgba(34,197,94,0.14); color: #4ADE80; }}
     .pill-sentiment-Negative {{ background: rgba(239,68,68,0.14); color: #F87171; }}
     .pill-sentiment-Neutral  {{ background: rgba(138,147,168,0.14); color: #B3BACB; }}
     .pill-importance {{ background: rgba(0,212,255,0.14); color: #5FDFFF; }}
     .pill-tag {{ background: rgba(255,255,255,0.06); color: #C7CCDA; }}
 
-    .badge-ai {{ display: inline-block; background: rgba(108,99,255,0.12); color: #A79BFF; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-bottom: 10px; }}
-    .impact-box {{ background: rgba(0,212,255,0.06); border-left: 3px solid {CYAN}; padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 13.5px; color: #D7DCE8; }}
-    .detail-box {{ background: rgba(255,255,255,0.03); border-left: 3px solid {VIOLET}; padding: 12px 14px; border-radius: 8px; font-size: 13.5px; line-height: 1.7; color: #C7CCDA; }}
+    .badge-ai {{ display: inline-block; background: rgba(108,99,255,0.12); color: #A79BFF; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; margin-bottom: 10px; }}
+    .impact-box {{ background: rgba(0,212,255,0.06); border-left: 3px solid {CYAN}; padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 14px; color: #D7DCE8; }}
+    .detail-box {{ background: rgba(255,255,255,0.03); border-left: 3px solid {VIOLET}; padding: 12px 14px; border-radius: 8px; font-size: 14px; line-height: 1.7; color: #C7CCDA; }}
 
     div[data-testid="stMetric"] {{ background: rgba(120,120,140,0.08); border-radius: 12px; padding: 14px 16px; }}
     div[data-testid="stVegaLiteChart"] .vega-actions {{ display: none !important; }}
@@ -150,17 +152,23 @@ st.markdown(f"""
     /* ---------- rising topic row ---------- */
     .topic-row {{ display:flex; align-items:center; gap:10px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }}
     .topic-row:last-child {{ border-bottom:none; }}
-    .topic-rank {{ width:20px; height:20px; border-radius:6px; background:rgba(108,99,255,0.14); color:#A79BFF; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; }}
-    .topic-name {{ font-size:13px; color:{TEXT}; font-weight:600; flex:1; }}
-    .topic-count {{ font-size:12px; color:{TEXT_DIM}; font-weight:700; }}
+    .topic-rank {{ width:20px; height:20px; border-radius:6px; background:rgba(108,99,255,0.14); color:#A79BFF; font-size:11.5px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; }}
+    .topic-name {{ font-size:13.5px; color:{TEXT}; font-weight:600; flex:1; }}
+    .topic-count {{ font-family:'JetBrains Mono',monospace; font-size:12.5px; color:{TEXT_DIM}; font-weight:700; }}
 
     /* ---------- heatmap ---------- */
     .heat-wrap {{ overflow-x:auto; }}
     .heat-table {{ border-collapse: collapse; width:100%; }}
-    .heat-table td, .heat-table th {{ text-align:center; font-size:10.5px; padding:4px; }}
+    .heat-table td, .heat-table th {{ text-align:center; font-size:11px; padding:4px; }}
     .heat-table th {{ color:{TEXT_DIMMER}; font-weight:600; }}
-    .heat-cat {{ text-align:left !important; color:{TEXT_DIM}; font-weight:600; font-size:11px; padding-right:8px !important; white-space:nowrap; }}
-    .heat-cell {{ width:34px; height:22px; border-radius:5px; }}
+    .heat-cat {{ text-align:left !important; color:{TEXT_DIM}; font-weight:600; font-size:11.5px; padding-right:8px !important; white-space:nowrap; }}
+    .heat-cell {{ width:34px; height:22px; border-radius:5px; font-family:'JetBrains Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center; }}
+
+    /* ---------- RSS source row ---------- */
+    .rss-row {{ display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); margin-bottom:8px; }}
+    .rss-dot {{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }}
+    .rss-name {{ font-size:13.5px; color:{TEXT}; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+    .rss-url {{ font-size:11px; color:{TEXT_DIMMER}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
 
     /* nav badge for filter radios rendered horizontally */
     div[role="radiogroup"] {{ gap: 4px; }}
@@ -230,6 +238,13 @@ def add_rss_source(url: str):
 def delete_rss_source(source_id):
     try:
         supabase.table("rss_sources").delete().eq("id", source_id).execute()
+    except Exception:
+        pass
+
+
+def toggle_rss_source(source_id, is_active: bool):
+    try:
+        supabase.table("rss_sources").update({"is_active": not is_active}).eq("id", source_id).execute()
     except Exception:
         pass
 
@@ -310,13 +325,10 @@ def render_kpi_row(items: list):
             sub_html = f'<div class="kpi-sub">{item["sub"]}</div>'
         else:
             sub_html = ""
-        cards_html += f"""
-        <div class="kpi-card">
-            <div class="kpi-label">{item['label']}</div>
-            <div class="kpi-value">{item['value']}</div>
-            {sub_html}
-        </div>
-        """
+        cards_html += (
+            f'<div class="kpi-card"><div class="kpi-label">{item["label"]}</div>'
+            f'<div class="kpi-value">{item["value"]}</div>{sub_html}</div>'
+        )
     st.markdown(f'<div class="kpi-row">{cards_html}</div>', unsafe_allow_html=True)
 
 
@@ -364,12 +376,13 @@ def _pill_row_html(item: dict) -> str:
     return f'<div class="pill-row">{pills}</div>'
 
 
-def render_item_card_open(item: dict, badge_text: str):
+def render_item_card_open(item: dict, badge_text: str, rank: int = None):
     sentiment = item.get("sentiment") or core.DEFAULT_SENTIMENT
     title = item.get("title") or item.get("repo_name", "")
+    rank_html = f'<span class="item-rank">#{rank}</span>' if rank else ""
     st.markdown(
         f'<div class="item-card sentiment-{sentiment}">'
-        f'<div class="item-title">{title}</div>'
+        f'<div class="item-title">{rank_html}{title}</div>'
         f'{_pill_row_html(item)}'
         f'<span class="badge-ai">{badge_text}</span>',
         unsafe_allow_html=True,
@@ -736,30 +749,30 @@ def render_dashboard_page():
     with col4:
         st.markdown('<div class="panel-card"><div class="panel-card-title">📰 Tin tức mới nhất</div></div>', unsafe_allow_html=True)
         if latest_news:
-            rows = "".join(f"""
-                <a href="{n.get('link', '#')}" target="_blank" style="display:flex;align-items:center;gap:10px;
-                    padding:9px 4px;text-decoration:none;border-bottom:1px solid rgba(255,255,255,0.04);">
-                    <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;
-                        background:{SENTIMENT_COLOR.get(n.get('sentiment') or core.DEFAULT_SENTIMENT, TEXT_DIM)};"></span>
-                    <span style="font-size:13px;color:#DDE1EC;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{(n.get('title') or '')[:70]}</span>
-                    <span style="font-size:11px;color:{TEXT_DIMMER};flex-shrink:0;">{_format_relative(n.get('created_at',''))}</span>
-                </a>
-            """ for n in latest_news)
+            rows = "".join(
+                f'<a href="{n.get("link", "#")}" target="_blank" '
+                f'style="display:flex;align-items:center;gap:10px;padding:9px 4px;text-decoration:none;'
+                f'border-bottom:1px solid rgba(255,255,255,0.04);">'
+                f'<span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;'
+                f'background:{SENTIMENT_COLOR.get(n.get("sentiment") or core.DEFAULT_SENTIMENT, TEXT_DIM)};"></span>'
+                f'<span style="font-size:13px;color:#DDE1EC;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{(n.get("title") or "")[:70]}</span>'
+                f'<span style="font-size:11px;color:{TEXT_DIMMER};flex-shrink:0;">{_format_relative(n.get("created_at",""))}</span></a>'
+                for n in latest_news
+            )
             st.markdown(f'<div>{rows}</div>', unsafe_allow_html=True)
         else:
             st.caption("Chưa có bài viết trong 7 ngày qua.")
     with col5:
         st.markdown('<div class="panel-card"><div class="panel-card-title">📡 Top nguồn tin</div></div>', unsafe_allow_html=True)
         if source_counts:
-            rows = "".join(f"""
-                <div style="display:flex;align-items:center;gap:8px;padding:6px 0;">
-                    <span style="font-size:11.5px;color:#C7CCDA;width:120px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{(s.split('//')[-1].split('/')[0])[:26]}</span>
-                    <div style="flex:1;height:7px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;">
-                        <div style="height:100%;border-radius:4px;width:{round((c/max_src)*100)}%;background:linear-gradient(90deg,{VIOLET},{CYAN});"></div>
-                    </div>
-                    <span style="font-size:11.5px;color:{TEXT_DIM};width:24px;text-align:right;">{c}</span>
-                </div>
-            """ for s, c in source_counts)
+            rows = "".join(
+                f'<div style="display:flex;align-items:center;gap:8px;padding:6px 0;">'
+                f'<span style="font-size:11.5px;color:#C7CCDA;width:120px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{(s.split("//")[-1].split("/")[0])[:26]}</span>'
+                f'<div style="flex:1;height:7px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;">'
+                f'<div style="height:100%;border-radius:4px;width:{round((c/max_src)*100)}%;background:linear-gradient(90deg,{VIOLET},{CYAN});"></div></div>'
+                f'<span class="mono" style="font-size:11.5px;color:{TEXT_DIM};width:24px;text-align:right;">{c}</span></div>'
+                for s, c in source_counts
+            )
             st.markdown(f'<div>{rows}</div>', unsafe_allow_html=True)
         else:
             st.caption("Chưa có dữ liệu nguồn.")
@@ -862,19 +875,19 @@ def render_news_page():
                      f'<div class="panel-card-sub">Số bài viết theo ngày trong khoảng: {news_filter["title"]}</div></div>', unsafe_allow_html=True)
         render_line_chart("newsTrendLine", trend_labels, trend_values, height=200, label="Bài viết")
     with colR:
-        st.markdown('<div class="panel-card"><div class="panel-card-title">🚀 Top Rising Topics</div>'
-                     '<div class="panel-card-sub">Tags xuất hiện nhiều nhất</div>', unsafe_allow_html=True)
         if top_topics:
-            rows = "".join(f"""
-                <div class="topic-row">
-                    <span class="topic-rank">{i+1}</span>
-                    <span class="topic-name">{t}</span>
-                    <span class="topic-count">{c} bài</span>
-                </div>
-            """ for i, (t, c) in enumerate(top_topics))
-            st.markdown(f'{rows}</div>', unsafe_allow_html=True)
+            rows = "".join(
+                f'<div class="topic-row"><span class="topic-rank">{i+1}</span>'
+                f'<span class="topic-name">{t}</span><span class="topic-count">{c} bài</span></div>'
+                for i, (t, c) in enumerate(top_topics)
+            )
         else:
-            st.markdown('<div style="color:#5B6272;font-size:12px;">Chưa có tags trong khoảng thời gian này.</div></div>', unsafe_allow_html=True)
+            rows = '<div style="color:#5B6272;font-size:12px;">Chưa có tags trong khoảng thời gian này.</div>'
+        st.markdown(
+            '<div class="panel-card"><div class="panel-card-title">🚀 Top Rising Topics</div>'
+            '<div class="panel-card-sub">Tags xuất hiện nhiều nhất</div>' + rows + '</div>',
+            unsafe_allow_html=True,
+        )
 
     with st.expander("📊 Thống kê chi tiết & Knowledge mini-map", expanded=False):
         if news_data:
@@ -961,8 +974,8 @@ def render_github_page():
         render_clickable_trend_chart(df)
 
         st.markdown(f"#### Chi tiết các dự án ({len(df)})")
-        for item in df.to_dict("records"):
-            render_item_card_open(item, "🤖 Phân tích AI")
+        for idx, item in enumerate(df.to_dict("records"), start=1):
+            render_item_card_open(item, "🤖 Phân tích AI", rank=idx)
             render_ai_analysis_block(item.get("ai_analysis"))
 
             col1, col2 = st.columns([1, 1])
@@ -1036,19 +1049,19 @@ def render_graph_page():
                      f'<span style="font-size:12px;color:{TEXT_DIM};">Cùng xuất hiện trong 1 bài</span></div>'
                      '</div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="panel-card"><div class="panel-card-title">📈 Top Tags</div></div>', unsafe_allow_html=True)
         top_tags = tag_counts.most_common(10)
         if top_tags:
-            rows = "".join(f"""
-                <div class="topic-row">
-                    <span class="topic-rank">{i+1}</span>
-                    <span class="topic-name">{t}</span>
-                    <span class="topic-count">{c}</span>
-                </div>
-            """ for i, (t, c) in enumerate(top_tags))
-            st.markdown(rows, unsafe_allow_html=True)
+            rows = "".join(
+                f'<div class="topic-row"><span class="topic-rank">{i+1}</span>'
+                f'<span class="topic-name">{t}</span><span class="topic-count">{c}</span></div>'
+                for i, (t, c) in enumerate(top_tags)
+            )
         else:
-            st.caption("Chưa có dữ liệu tags trong phạm vi đã chọn.")
+            rows = '<div style="color:#5B6272;font-size:12px;">Chưa có dữ liệu tags trong phạm vi đã chọn.</div>'
+        st.markdown(
+            '<div class="panel-card"><div class="panel-card-title">📈 Top Tags</div>' + rows + '</div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ==========================================
@@ -1102,18 +1115,29 @@ def render_settings_page():
             st.info("Chưa có nguồn RSS nào.")
         else:
             for src in sources:
-                c1, c2, c3 = st.columns([5, 1, 1])
+                is_active = src.get("is_active", True)
+                dot_color = GREEN if is_active else TEXT_DIMMER
+                dot_glow = f"box-shadow:0 0 5px {GREEN};" if is_active else ""
+                name = src.get("name") or src["url"]
+                st.markdown(
+                    f'<div class="rss-row"><span class="rss-dot" style="background:{dot_color};{dot_glow}"></span>'
+                    f'<div style="flex:1;min-width:0;"><div class="rss-name">{name}</div>'
+                    f'<div class="rss-url">{src["url"]}</div></div></div>',
+                    unsafe_allow_html=True,
+                )
+                c1, c2, c3 = st.columns([1, 1, 1])
                 with c1:
-                    display = src["url"]
-                    st.text(display[:50] + "..." if len(display) > 53 else display)
+                    if st.button("🟢 ON" if is_active else "⚪ OFF", key=f"toggle_{src['id']}", use_container_width=True):
+                        toggle_rss_source(src["id"], is_active)
+                        st.rerun()
                 with c2:
-                    if st.button("🔍", key=f"check_{src['id']}"):
+                    if st.button("🔍 Kiểm tra", key=f"check_{src['id']}", use_container_width=True):
                         is_ok = check_rss_status(src["url"])
                         (st.success if is_ok else st.error)(
                             "RSS hoạt động" if is_ok else "RSS lỗi hoặc không còn tồn tại"
                         )
                 with c3:
-                    if st.button("🗑️", key=f"del_{src['id']}"):
+                    if st.button("🗑️ Xoá", key=f"del_{src['id']}", use_container_width=True):
                         delete_rss_source(src["id"])
                         st.rerun()
 
